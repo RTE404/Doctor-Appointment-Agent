@@ -1,80 +1,74 @@
 # Doctor Appointment Agent — Data Model
 
-There is no application-owned relational database — Medplum is the only
-datastore (Design doc §2, §5). This document is the logical schema: every
-entity this app reads or writes, and the attributes it actually uses on
-each, presented table-style (the closest equivalent to "DB tables/rows" for a
-FHIR-resource-backed app). Field names follow FHIR R4 resource shapes as
-stored in Medplum.
+Supersedes the Python-era Data Model doc. Medplum remains the only
+datastore — nothing here changes that — but the specific resources used
+have expanded (PractitionerRole, Communication, Device, HealthcareService
+are new), and one prior decision is explicitly reversed (PractitionerRole
+is now adopted). Field names follow FHIR R4 shapes as stored in Medplum;
+extension URLs and search parameters marked **confirmed** were checked
+directly against the Medplum monorepo source (`packages/definitions`,
+`packages/server/src/fhir/operations/utils/scheduling-parameters.ts`), not
+assumed from documentation.
 
-Patient/clinical data is imported from a Synthea-generated FHIR bundle
-dataset (983 patient bundles, sourced via Kaggle — confirmed to be standard
-Synthea output: `Bundle`/`transaction` shape, Synthea-attributed
-`Organization.identifier`) into Medplum ahead of time. This app never
-generates patient/clinical data itself, only reads it.
-
-`Disease_Description.csv` (project root, 41 diseases) is used at import time
-as the backbone of the specialty-enrichment mapping — see "Specialty
-enrichment" below. `appointments.csv` (project root) was evaluated and
-rejected: it's a no-show/attendance dataset with no doctor or specialty
-column and no ID overlap with our Patient/Practitioner pools, and using it
-would reintroduce the fake-attendance-history complexity already dropped
-from the schedule design (Design doc §5).
+Patient/clinical data is seeded once from a Synthea-generated FHIR bundle
+dataset (983 patient bundles, `fhir/` at the project root, sourced via
+Kaggle — confirmed standard Synthea output) via `tools/seed/`. The app
+never generates patient/clinical data itself, only reads it.
+`Disease_Description.csv` (41 diseases) at the project root backs the
+specialty-resolution fix below.
 
 ## Two Doctor Pools
 
-There are two distinct sources of `Practitioner` data in this app, with
-different provenance and different specialty-data quality. Everything below
-is organized around this split:
+Unchanged organizing idea from the original design, now with a corrected
+enrichment mechanism:
 
-| Pool | Source | Has specialty natively? |
+| Pool | Source | Specialty |
 |---|---|---|
-| **Previous physicians** (§ below) | Riding along in the Synthea/Kaggle patient bundles, already in Medplum | **No** — confirmed absent dataset-wide (0 of 983 files contain `qualification`, `PractitionerRole`, or `specialty`); derived from their encounters' conditions at import time, see "Specialty Enrichment" below |
-| **New doctors** (search path) | NPPES API, live lookup, mirrored into Medplum on first scheduling request | Yes — NPPES taxonomy gives a real specialty |
+| **Previous physicians** | Riding along in the seeded Synthea bundles | Derived at seed time by a **tiered matcher** (see below) — the original exact-match approach was confirmed to be a no-op against this dataset (0 of 49 real `Encounter.type[].text` values overlap with the 41 disease names) |
+| **New doctors** | NPPES, live lookup, mirrored into Medplum on first scheduling request | Real NUCC taxonomy code, returned natively by NPPES |
 
-Downstream code (`patients.find_previous_practitioner_by_specialty`) doesn't
-need to know which pool a `Practitioner` came from — both end up with a
-`qualification[].code` populated by the time they're queryable, just via
-different means (enriched at import vs. copied from NPPES).
+Both pools resolve to the same shape once queryable: a `Practitioner` +
+`PractitionerRole` pair with a real NUCC specialty code, so downstream
+code (`agent-find-doctors`) doesn't need to know which pool a doctor came
+from.
 
-## Read-only entities (patient/clinical data, imported into Medplum from the Synthea/Kaggle dataset)
+**Specialty-resolution fix, in brief** (full detail in Design doc §9):
+substring-match `Encounter.reasonCode[].coding[].display` and linked
+`Condition.code.text` (tier 1 — real clinical signal, present on 11,048 of
+the corpus's encounters), fall back to a hand-map covering **all 49**
+known `Encounter.type[].text` strings (tier 2 — weaker, encounter *kind*
+not diagnosis), fall back to "General Practice" (tier 3). Majority vote
+per practitioner across their encounters, same as originally designed —
+only the matched-against field changed. **Confirmed via full-corpus audit:
+tier 1 alone resolves only 52.27% of practitioners (473/905)** — tier 2 is
+doing nearly half the real work, so its hand-map is built and reviewed as
+a first-class table, not a rare fallback.
+
+**Naming note**: `nuccCode` (this table, `nppes.ts`'s `DoctorCandidate`) is
+the raw taxonomy field name at the data-source boundary; `specialtyCode`
+(used in bot request/response payloads — see LLD) is the exact same NUCC
+code value, named for its role as an I/O field rather than a table
+lookup. Same string, two names depending on context.
+
+## Read-only entities (patient/clinical data, seeded into Medplum from Synthea)
 
 ### Patient
 
 | Attribute | Type | Notes |
 |---|---|---|
 | `id` | string | Medplum resource id |
-| `name` | HumanName | display name shown in patient picker |
-| `birthDate` | date | used for age-appropriate display only |
+| `name` | HumanName | display name in patient picker |
+| `birthDate` | date | display only |
 | `gender` | code | administrative gender |
-| `identifier` | Identifier[] | not used beyond Medplum's own id |
+| `address[0].extension` (`http://hl7.org/fhir/StructureDefinition/geolocation`) | nested extension, `latitude`/`longitude` `valueDecimal` | **confirmed present on every Synthea patient** — this is what makes patient-side distance ranking free (no zip lookup needed); only NPPES-returned doctors need one |
 
-### Condition
+### Condition, MedicationRequest, AllergyIntolerance
 
-| Attribute | Type | Notes |
-|---|---|---|
-| `id` | string | |
-| `subject` | Reference(Patient) | links back to the patient |
-| `code` | CodeableConcept | condition name/text shown in history |
-| `clinicalStatus` | code | active/resolved — shown for context, not filtered on |
-
-### MedicationRequest
-
-| Attribute | Type | Notes |
-|---|---|---|
-| `id` | string | |
-| `subject` | Reference(Patient) | |
-| `medicationCodeableConcept` | CodeableConcept | medication name |
-| `status` | code | active/stopped — display only |
-
-### AllergyIntolerance
-
-| Attribute | Type | Notes |
-|---|---|---|
-| `id` | string | |
-| `patient` | Reference(Patient) | |
-| `code` | CodeableConcept | allergen |
-| `criticality` | code | display only |
+Unchanged in shape from the original design — `subject`/`patient`
+reference, a `code`/`medicationCodeableConcept`.`text`, `clinicalStatus`/
+`status`. Read by `agent-intake` and `agent-patient-chat`; displayed
+directly by `@medplum/react`'s `PatientSummary` component on the frontend
+(no custom history-assembly code needed — see Backend doc).
 
 ### Encounter
 
@@ -83,147 +77,92 @@ different means (enriched at import vs. copied from NPPES).
 | `id` | string | |
 | `subject` | Reference(Patient) | |
 | `participant[].individual` | Reference(Practitioner) | source of "previous physician" |
-| `serviceProvider` | Reference(Organization) | clinic/org the encounter happened at |
-| `period` | Period | encounter date, shown in history |
-| `reasonCode` | CodeableConcept[] | display only for the patient's own history view; also the input signal used to derive the linked practitioner's specialty at import time (see below) |
+| `serviceProvider` | Reference(Organization) | |
+| `period` | Period | |
+| `type[].text` | string | tier-2 signal for specialty resolution — the 49 distinct values corpus-wide are encounter *kinds* ("General examination of patient," "Well child visit"), not diagnoses |
+| `reasonCode[].coding[].display` | string | **tier-1 signal** for specialty resolution — real condition/reason text, present on 11,048 of the corpus's encounters |
 
-### Practitioner (previous physicians, from past Encounters in the imported dataset)
+### Practitioner (previous physicians, from the seeded dataset)
 
 | Attribute | Type | Notes |
 |---|---|---|
 | `id` | string | |
-| `name` | HumanName | displayed as "previous physician" |
-| `qualification[].code` | CodeableConcept | **not present in the source Synthea/Kaggle data** — the raw bundles have no `qualification`, no `PractitionerRole`, and no specialty info anywhere (confirmed across all 983 files). This field is written in by the one-time import/enrichment step below, not by Synthea. Once enriched, it's matched against the LLM-extracted specialty in `patients.find_previous_practitioner_by_specialty` exactly like NPPES-sourced practitioners. |
-
-**Specialty enrichment (one-time, at import): derived from encounter
-conditions via `Disease_Description.csv`, not assigned arbitrarily.** The
-source data has no direct specialty field, but it does carry a real clinical
-signal: each `Encounter` a practitioner participated in has a
-`reasonCode`/`type.text` naming the condition in plain English (e.g. "Cardiac
-Arrest," "Prediabetes"). `Disease_Description.csv` supplies 41 real disease
-names to match that text against — a larger, more legitimate reference set
-than guessing at SNOMED codes. The file itself only has `Disease,
-Description` columns (no specialty), so a `Specialty` column is added once,
-by hand, to build the mapping used at import:
-
-| Disease | Specialty |
-|---|---|
-| Drug Reaction | Allergy and Immunology |
-| Malaria | Infectious Disease |
-| Allergy | Allergy and Immunology |
-| Hypothyroidism | Endocrinology |
-| Psoriasis | Dermatology |
-| GERD | Gastroenterology |
-| Chronic cholestasis | Gastroenterology |
-| hepatitis A | Gastroenterology |
-| Osteoarthristis | Orthopedics |
-| (vertigo) Paroymsal Positional Vertigo | Otolaryngology (ENT) |
-| Hypoglycemia | Endocrinology |
-| Acne | Dermatology |
-| Diabetes | Endocrinology |
-| Impetigo | Dermatology |
-| Hypertension | Cardiology |
-| Peptic ulcer diseae | Gastroenterology |
-| Dimorphic hemorrhoids(piles) | General Surgery |
-| Common Cold | General Practice |
-| Chicken pox | Infectious Disease |
-| Cervical spondylosis | Orthopedics |
-| Hyperthyroidism | Endocrinology |
-| Urinary tract infection | Urology |
-| Varicose veins | Vascular Surgery |
-| AIDS | Infectious Disease |
-| Paralysis (brain hemorrhage) | Neurology |
-| Typhoid | Infectious Disease |
-| Hepatitis B | Gastroenterology |
-| Fungal infection | Dermatology |
-| Hepatitis C | Gastroenterology |
-| Migraine | Neurology |
-| Bronchial Asthma | Pulmonology |
-| Alcoholic hepatitis | Gastroenterology |
-| Jaundice | Gastroenterology |
-| Hepatitis E | Gastroenterology |
-| Dengue | Infectious Disease |
-| Hepatitis D | Gastroenterology |
-| Heart attack | Cardiology |
-| Pneumonia | Pulmonology |
-| Arthritis | Rheumatology |
-| Gastroenteritis | Gastroenterology |
-| Tuberculosis | Pulmonology |
-
-Import logic:
-
-1. Normalize each `Encounter.type[].text` (lowercase, trim) and match it
-   against the `Disease` column above (exact/near-exact match — the source
-   list itself already has minor typos like "Osteoarthristis" and "diseae,"
-   which is fine since we're matching against this exact list, not a
-   dictionary). No match → no candidate specialty from that encounter.
-2. For each `Practitioner`, collect every `Encounter` they participated in
-   across the imported dataset, map each to a specialty candidate via the
-   table above, falling back to "General Practice" for any practitioner
-   with zero matching encounters.
-3. Assign the practitioner the most frequent candidate specialty across
-   their encounters, and write it into `Practitioner.qualification[].code`.
-
-This is naturally deterministic — a pure function of each practitioner's
-actual encounter data, not a random seed — so re-running the import produces
-the same assignments every time. It's still a heuristic (41 diseases won't
-cover every `Encounter.type.text` in 983 patient bundles, and the
-Disease→Specialty column above is hand-categorized, not a clinical coding
-standard), but it's grounded in what the doctor actually treated rather than
-being arbitrary, which matters for demo credibility: a doctor who saw a
-patient for a heart attack should plausibly end up labeled Cardiology, not
-something unrelated. This is a data-quality patch applied once during
-import, not something the running app computes; it exists purely so FR-5's
-matching logic has something real — and reasonably sensible — to compare
-against.
+| `identifier` | `[{system: "http://hl7.org/fhir/sid/us-npi", value: "290"}]`-shaped | Synthea's "NPI" values are short/fake (confirmed directly, e.g. `"290"`), never colliding with real 10-digit NPPES NPIs |
+| `name` | HumanName | |
+| `qualification[0].code.text` | CodeableConcept | display-copy of specialty — dual-written alongside `PractitionerRole.specialty` (below) for any component that reads it, but is **not** the queryable source of truth |
 
 ### Organization
 
-| Attribute | Type | Notes |
-|---|---|---|
-| `id` | string | |
-| `name` | string | clinic/hospital name, shown alongside a previous-physician encounter |
+Unchanged — `id`, `name`, used for encounter context display only.
 
-## Written entities (doctor/scheduling data, created lazily by this app)
+## Written entities (doctor/scheduling/AI-artifact data, created by the app itself)
 
 ### Practitioner (new, mirrored from NPPES)
 
-Same shape as above, populated from a `directory.Doctor` the first time that
-NPI is scheduled against:
+Same shape as above, populated the first time an NPPES NPI is scheduled
+against. Lookup key: `identifier` search on the NPI system, which is what
+makes creation idempotent.
 
-| Attribute | Source |
-|---|---|
-| `identifier` | `[{system: "http://hl7.org/fhir/sid/us-npi", value: <npi>}]` |
-| `name` | NPPES first/last name |
-| `telecom` | NPPES phone |
-| `address` | NPPES practice address |
-| `qualification[].code` | NPPES taxonomy/specialty description |
+### PractitionerRole *(new in this design — reverses the original decision to skip it)*
 
-Lookup key for "does this doctor already exist in Medplum": `identifier`
-search on the NPI system above — this is what makes `ensure_practitioner`
-idempotent (Design doc §5's "never recreate" rule).
+| Attribute | Type | Notes |
+|---|---|---|
+| `id` | string | |
+| `practitioner` | Reference(Practitioner) | |
+| `specialty` | `CodeableConcept` with NUCC coding | **confirmed real, indexed search parameter** (`PractitionerRole?specialty=...`) — this is what makes "has this patient seen this specialty before" a single query instead of pulling every practitioner and filtering in code, which is what the original Python design had to do |
+| `organization` | Reference(Organization) | for NPPES-mirrored doctors |
+
+Why adopted now: `Practitioner.qualification` is licenses/certifications/
+degrees, not specialty — using it for specialty was a POC shortcut in the
+original design, and `PractitionerRole.specialty` is the semantically
+correct, queryable field. Cost is one extra conditional-create per
+practitioner; `Practitioner.qualification[0].code` is still dual-written
+as a display copy.
 
 ### Schedule
 
 | Attribute | Type | Notes |
 |---|---|---|
-| `id` | string | Medplum-assigned |
-| `actor` | Reference(Practitioner) | exactly one — the doctor this schedule belongs to |
-| extension: `SchedulingParameters` | complex | encodes recurring `availableTime` blocks: working days, start/end hour, lunch-break window |
+| `id` | string | |
+| `actor` | Reference(Practitioner), **exactly one** | confirmed hard requirement — `getSchedulingParametersGroup` throws `'Scheduling only supported on schedules with exactly one actor'` if violated |
+| `serviceType` | CodeableReference(HealthcareService), **0..\* per FHIR R4** | includes **both** HealthcareServices (Office Visit + Urgent Visit) so either can be requested via `$find`'s `service-type-reference` param depending on the patient's `urgency`; the requested service must be present in this array or the operation throws |
+| extension: `SchedulingParameters` | complex, **confirmed exact URL**: `https://medplum.com/fhir/StructureDefinition/SchedulingParameters` | see attribute breakdown below |
 
-**Generation rule:** parameters (which days off, exact hours, lunch window)
-are derived deterministically from the doctor's NPI as a seed, so the same
-NPI always produces the same weekly template if ever recreated. Created once
-per `Practitioner`, looked up by `actor` reference thereafter (Design doc
-§5).
+**`SchedulingParameters` sub-extensions** (confirmed directly from
+`scheduling-parameters.ts`): `duration`, `alignmentInterval`,
+`alignmentOffset`, `bufferBefore`, `bufferAfter` (all `valueDuration`);
+`service` (`valueReference` to HealthcareService); `timezone`,
+`alignmentTimezone` (`valueCode`, IANA); `availability` (nested, containing
+`availableTime` blocks with `daysOfWeek`/`allDay`/`availableStartTime`/
+`availableEndTime`, or `notAvailableTime` blocks with `description`/
+`during`).
+
+**Gotcha, confirmed from source, worth documenting precisely**:
+`availableTime`'s `daysOfWeek` sub-extension repeats once per day — a
+doctor working Mon/Wed/Fri needs three separate `{url: 'daysOfWeek',
+valueCode: ...}` entries inside one `availableTime` block, not one entry
+holding an array of days.
+
+**Timezone requirement, confirmed**: every `Schedule` must resolve a
+timezone from *somewhere* — either its own/its HealthcareService's
+`SchedulingParameters.timezone`, or the actor's
+`http://hl7.org/fhir/StructureDefinition/timezone` extension — or `$find`
+throws `'No timezone specified'`. `ensurePractitionerAndSchedule` sets
+this from a small state→IANA-zone table.
+
+**Generation rule** (unchanged intent from original design): working
+days/hours/lunch gap are derived deterministically from the doctor's NPI
+as a seed, so the same NPI always produces the same weekly template.
+Created once per `Practitioner`, looked up by `actor` reference
+thereafter. Schedules start fully open — no fake pre-booked history.
 
 ### Slot
 
 | Attribute | Type | Notes |
 |---|---|---|
-| `id` | string | only exists once busy/held — free time is computed live by `$find`, never persisted (Design doc §5) |
+| `id` | string | only exists once busy/held/blocked — **confirmed** free time is computed live by `$find`, never persisted as a resource. **Always a standalone, independently searchable resource — never `contained` inside an Appointment.** `agent-expire-holds` depends on this: it searches `Slot?status=busy-tentative` directly, which would find nothing if Slot were embedded in the Appointment. Deleted (not status-flipped) once its owning Appointment is cancelled — see `cancel-appointment.ts` in the LLD. |
 | `schedule` | Reference(Schedule) | |
-| `start` / `end` | dateTime | 30-minute granularity |
+| `start`/`end` | dateTime | 30 or 15-minute granularity, matching whichever `HealthcareService.duration` was requested |
 | `status` | code | `busy-tentative` (post-`$hold`) → `busy` (post-`$confirm`) |
 
 ### Appointment
@@ -231,10 +170,75 @@ per `Practitioner`, looked up by `actor` reference thereafter (Design doc
 | Attribute | Type | Notes |
 |---|---|---|
 | `id` | string | |
-| `status` | code | `pending` (post-`$hold`) → `booked` (post-`$confirm`) |
-| `start` / `end` | dateTime | matches the chosen slot |
-| `participant[]` | { actor: Reference(Patient \| Practitioner), status } | one entry each for the patient and the practitioner |
-| `slot` | Reference(Slot)[] | the slot(s) this appointment claims |
+| `status` | code | `proposed` → `pending` (post-`$hold`) → `booked` (post-`$confirm`) |
+| `start`/`end` | dateTime | |
+| `participant[]` | Patient + Practitioner references | `Appointment:actor` and `Appointment:patient` both confirmed real search parameters |
+| `serviceType` | CodeableReference(HealthcareService), with the `https://medplum.com/fhir/service-type-reference` extension | required by `$hold`; whichever of Office Visit/Urgent Visit matches `urgency` |
+| `slot` | Reference(Slot)[] | set by `$hold`/`$confirm`; what `agent-expire-holds`, `cancel-appointment.ts`, and `reschedule-appointment.ts` resolve to find/release the held Slot |
+| `description` | string | **the "stated issue" shown on the doctor's queue card** — the LLM's short reason string, written by `agent-book-appointment` after `$confirm` |
+| `comment` | string | the patient's verbatim complaint text (longer, raw) — not shown on the queue card, only `description` is |
+| `reasonCode[0].text` | string | same value as `description` — a structured-field copy for any FHIR-standard tooling that reads `reasonCode` instead |
+| `priority` | integer | derived from `urgency` |
+
+### Communication *(new — stores both the pre-visit summary and every chat turn)*
+
+Chosen over an Appointment extension, `DocumentReference`, or
+`Composition` — see Design doc rationale. `recipient`, `subject`, `sent`,
+and `category` are all **confirmed real search parameters**;
+**`Communication:about` is confirmed to NOT exist as a search parameter**
+in this Medplum version (checked directly against the search-parameter
+definitions) — `about` is still a valid *field* to store on the resource,
+just not one anything in this design queries by.
+
+| Attribute | Type | Notes |
+|---|---|---|
+| `id` | string | |
+| `status` | code | `preparation` (drafted at intake, no recipient yet) → `completed` (once the doctor is known, at booking time) |
+| `category[0].coding` | small custom CodeSystem | `ai-previsit-summary` or `ai-chat` |
+| `priority` | code | the patient's stated `urgency`, as a real code |
+| `subject` | Reference(Patient) | |
+| `sender` | Reference(Device) | see `Device` below |
+| `recipient` | Reference(Practitioner)[] | empty until booking confirms which doctor |
+| `about` | Reference(Appointment)[] | stored, not searched |
+| `sent` | dateTime | |
+| `payload[0].contentString` | string | the summary text, or one chat turn's content |
+| `partOf` | Reference(Communication)[] | threads chat turns together |
+| `meta.tag` | `[{code: 'ai-generated'}]` | machine-authorship marker, explicit in the data, not just a UI disclaimer. **Present only on `Device`-authored Communications** (the pre-visit summary, and the AI's chat answers) — **absent** on the doctor's own chat-question Communications (`sender: Practitioner`), since those are human-authored |
+
+### Device *(new — marks AI-generated content)*
+
+One singleton, conditional-created at seed time: `Device/ai-appointment-agent`.
+Used only as `Communication.sender` — FHIR's correct actor type for
+machine-generated content, so "a machine wrote this" is a queryable fact,
+not just a banner in the UI.
+
+### HealthcareService *(new — required by `$find`/`$hold`)*
+
+Two singletons, both created at bootstrap: "Office Visit" (30-minute
+`duration`) and "Urgent Visit" (15-minute `duration`). Every `Schedule`
+lists both in its `serviceType` array (see `Schedule` above); which one a
+given booking uses is decided by the patient's stated `urgency` —
+`routine` → Office Visit, `urgent` → Urgent Visit — resolved into concrete
+ids by `agent-ensure-doctor` (LLD) and picked by the caller before
+`agent-book-appointment` runs. This is settled, load-bearing behavior, not
+an open item. `HealthcareService` is about *what kind of visit*, not *what
+kind of doctor* — specialty lives on `PractitionerRole`, not here.
+
+## "Every patient who's ever booked with NPI X"
+
+Confirmed queryable without depending on any unconfirmed search-parameter/
+modifier support:
+
+```
+① Practitioner?identifier=http://hl7.org/fhir/sid/us-npi|{npi}
+② Appointment?actor=Practitioner/{id}&_include=Appointment:patient&_sort=-date
+③ Communication?recipient=Practitioner/{id}&category=...ai-previsit-summary&_include=Communication:subject
+```
+
+② and ③ run in parallel, joined in memory on the patient reference. This
+deliberately avoids `_revinclude` on `Communication:about` (confirmed not
+to exist) and any `:identifier` reference-chaining modifier that hasn't
+been verified.
 
 ## Entity Relationships
 
@@ -246,26 +250,34 @@ erDiagram
     PATIENT ||--o{ ENCOUNTER : had
     ENCOUNTER }o--|| PRACTITIONER : "seen by"
     ENCOUNTER }o--|| ORGANIZATION : "at"
+    PRACTITIONER ||--|| PRACTITIONERROLE : "has specialty via"
     PRACTITIONER ||--o| SCHEDULE : "has one"
+    SCHEDULE }o--|| HEALTHCARESERVICE : "schedulable for"
     SCHEDULE ||--o{ SLOT : "computes/holds"
     SLOT ||--|| APPOINTMENT : "claimed by"
     PATIENT ||--o{ APPOINTMENT : books
+    PATIENT ||--o{ COMMUNICATION : "subject of"
+    PRACTITIONER ||--o{ COMMUNICATION : "recipient of"
+    DEVICE ||--o{ COMMUNICATION : sends
+    APPOINTMENT ||--o| COMMUNICATION : "about (stored, not searchable)"
 ```
 
 ## Not modeled
 
-- No `PractitionerRole` resource — specialty is kept directly on
-  `Practitioner.qualification` to avoid an extra resource type for a POC.
-  This is a deliberate simplification, not a FHIR-purity claim — and it also
-  matches the source data's own reality, since the imported Synthea/Kaggle
-  bundles contain no `PractitionerRole` resources at all.
-- No local cache/table of NPPES search results — every `directory.
-  search_doctors` call hits NPPES live; only the doctor actually selected for
-  scheduling gets mirrored into Medplum.
-- No clinically-authoritative specialty taxonomy or certification data — the
-  Disease→Specialty mapping (above) is a hand-categorized lookup over 41
-  diseases for this POC, not a real medical coding system. It's good enough
-  to be plausible, not meant to be clinically accurate.
-- No use of the replacement `appointments.csv` (Brazil-style no-show
-  dataset) — evaluated and rejected, see the note under "Read-only
-  entities" above.
+- No `Composition` or `DocumentReference` for the AI summary — considered
+  and rejected as over-engineered for a 2–3 sentence artifact (see Design
+  doc rationale); `Communication` covers the actual requirements.
+- No real per-doctor `AccessPolicy` enforcement in the core flow — NPI
+  entry on `/desk` is an intentional display filter, not authentication
+  (Design doc §11). A demonstration `AccessPolicy` remains an optional,
+  separate future item, not part of this data model.
+- No clinically-authoritative specialty taxonomy beyond NUCC — NUCC itself
+  is a real, standard code system (used natively by NPPES), so this is a
+  smaller simplification than the original design's free-text specialty
+  labels, not a new one.
+- No local cache/table of NPPES search results — every `agent-find-doctors`
+  call hits NPPES live; only the doctor actually selected for scheduling
+  gets mirrored into Medplum.
+- No use of the `appointments.csv` no-show dataset — evaluated and
+  rejected in the original design (no doctor/specialty column, no ID
+  overlap with our pools); this rebuild doesn't reopen that question.

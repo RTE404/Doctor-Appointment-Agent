@@ -118,12 +118,16 @@ arbitrary NPPES doctors.
 Where it *is* useful: **as infrastructure, not as a data source.** SuperSaaS's
 free, self-serve tier provides a real, live, hosted scheduling API — real
 HTTP round-trips, real concurrency/double-booking handling, real slot state —
-that could stand in for the project's own synthetic-slot generator and
-Postgres storage. The doctors populated into it would still be fictional
-demo entries, but the booking mechanics would be handled by production
-scheduling infrastructure rather than hand-rolled code. It does not solve
-"pull real doctors' real appointments" — that remains unsolved by every
-option researched.
+that could stand in for a hand-rolled synthetic-slot generator. The doctors
+populated into it would still be fictional demo entries, but the booking
+mechanics would be handled by production scheduling infrastructure rather
+than hand-rolled code. **Update, post-Medplum-native rebuild**: this
+recommendation is now moot — Medplum's own native scheduling operations
+(`$find`/`$hold`/`$confirm`) already provide exactly this property (real,
+atomic, conflict-checked booking mechanics) for the app's synthetic doctors,
+so there's no longer a gap for SuperSaaS to fill. It does not solve "pull
+real doctors' real appointments" either way — that remains unsolved by
+every option researched.
 
 ---
 
@@ -133,16 +137,18 @@ No change to the project's core design decision: there is still no free,
 universal, real-time source of appointment availability for arbitrary real
 (NPPES-sourced) doctors. The synthetic, NPI-seeded, lazily-generated
 scheduling approach already documented in `Doctor_Appointment_Agent_Context.md`
-remains the right default for this POC.
+remains the right default for this POC — now implemented on Medplum's
+native `Schedule`/`Slot`/`Appointment` operations rather than a
+self-hosted service, which happens to also deliver the "real scheduling
+mechanics" property that used to be SuperSaaS's main selling point (see the
+update above).
 
-If real data is wanted later, in order of practicality:
-1. **SuperSaaS as a real scheduling backend** for demo doctors (free,
-   self-serve, real API) — improves realism of the booking mechanics without
-   requiring any partnership.
-2. **A one-off partnership with a specific willing clinic** already on
+If real *data* (not just real mechanics, which Medplum already provides)
+is wanted later, in order of practicality:
+1. **A one-off partnership with a specific willing clinic** already on
    SuperSaaS, TIMIFY, or Zocdoc, to pull that one clinic's real availability —
    not scalable, but genuinely real.
-3. **Zocdoc's partner program**, if the project ever has budget and a real
+2. **Zocdoc's partner program**, if the project ever has budget and a real
    provider customer to sponsor production access — the strongest platform
    technically, but the most gated.
 

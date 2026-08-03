@@ -1,5 +1,13 @@
 # Doctor Appointment Agent Implementation Plan
 
+> **⚠️ SUPERSEDED (2026-08-03).** New requirements (build natively on
+> Medplum; add a doctor-facing surface) retired this entire Python/FastAPI/
+> Streamlit plan. Do not resume or execute this plan. The current design
+> lives in `2026-08-03-medplum-native-rebuild.md` and the top-level docs
+> (`Doctor_Appointment_Agent_Design.md`, `_HLD.md`, `_Specs.md`,
+> `_Backend.md`, `_Data_Model.md`, `_LLD.md`). This file is kept only as a
+> historical record of Tasks 1-8's progress in the retired Python worktree.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the Doctor Appointment Agent POC end to end — a FastAPI backend (Medplum for all data, NPPES for doctor discovery, one LLM call for intent extraction) plus a minimal Streamlit UI, per the specs already written in `docs/`.
