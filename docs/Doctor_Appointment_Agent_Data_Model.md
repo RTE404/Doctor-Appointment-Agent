@@ -125,7 +125,7 @@ as a display copy.
 |---|---|---|
 | `id` | string | |
 | `actor` | Reference(Practitioner), **exactly one** | confirmed hard requirement — `getSchedulingParametersGroup` throws `'Scheduling only supported on schedules with exactly one actor'` if violated |
-| `serviceType` | CodeableReference(HealthcareService), **0..\* per FHIR R4** | includes **both** HealthcareServices (Office Visit + Urgent Visit) so either can be requested via `$find`'s `service-type-reference` param depending on the patient's `urgency`; the requested service must be present in this array or the operation throws |
+| `serviceType` | `CodeableConcept[]`, **0..\* — confirmed directly** (`min:0, max:"*"` in Medplum's R4 StructureDefinition) | includes **both** HealthcareServices (Office Visit + Urgent Visit) so either can be requested via `$find`'s `service-type-reference` param depending on the patient's `urgency`. **Confirmed exact matching mechanic** (`packages/server/src/util/servicetype.ts`): R4 has no native `CodeableReference`, so Medplum represents "this concept points at that HealthcareService" via an extension embedded on the `CodeableConcept` itself — `{extension: [{url: 'https://medplum.com/fhir/service-type-reference', valueReference: {reference: 'HealthcareService/{id}'}}]}` — one such entry per HealthcareService. `isCodeableReferenceLikeTo` checks with `.some(...)` across the array — "is the requested service *present*," not "is it the only one" — so a two-entry array naturally supports both visit types on one Schedule |
 | extension: `SchedulingParameters` | complex, **confirmed exact URL**: `https://medplum.com/fhir/StructureDefinition/SchedulingParameters` | see attribute breakdown below |
 
 **`SchedulingParameters` sub-extensions** (confirmed directly from

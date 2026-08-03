@@ -206,10 +206,16 @@ on which side of the boundary you're reading.
      same logic as the retired Python `template.py`, just producing a
      `SchedulingParameters` extension instead of Postgres rows), resolve
      the doctor's timezone from a small state→IANA table, and
-     conditional-create the `Schedule` with `serviceType: [Office Visit,
-     Urgent Visit]` — **both** HealthcareServices (FHIR R4's
-     `Schedule.serviceType` is `0..*`, confirmed — a Schedule isn't
-     limited to one), so either can be requested via `$find`'s
+     conditional-create the `Schedule` with `serviceType` holding **two**
+     entries, one per HealthcareService (Office Visit, Urgent Visit) —
+     confirmed both the array cardinality (`0..*`) and the exact matching
+     mechanic directly in Medplum's `servicetype.ts`: each entry is a
+     `CodeableConcept` carrying the `service-type-reference` extension
+     (`{url: 'https://medplum.com/fhir/service-type-reference',
+     valueReference: {reference: 'HealthcareService/{id}'}}`), and
+     `isCodeableReferenceLikeTo` matches with `.some(...)` across the
+     array — "is the requested service present," not "is it the only
+     one" — so either service can be requested via `$find`'s
      `service-type-reference` depending on the patient's `urgency`.
 - **Output**: the practitioner/schedule ids plus **both** HealthcareService
   ids, keyed by which urgency they serve — the caller picks the right one.
