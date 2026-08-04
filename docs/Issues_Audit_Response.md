@@ -1,5 +1,12 @@
 # Response to `issues.md` — Verification Report
 
+> **Update (fix pass complete):** All 14 P0 defects below are now fixed in
+> `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`
+> (commit `7809524`). See the "Re-Verification" section at the end of this
+> document for the checklist confirming each fix against the same source
+> facts this report established. The original audit text below is left
+> unmodified as the historical record of what was found.
+
 `issues.md` audited the 2026-08-04 implementation plan and claimed 14
 release-blocking defects, 19 P1 risks, and several open product decisions.
 This document independently re-verifies every P0 claim and the dataset
@@ -370,3 +377,56 @@ Communication read-and-spread, the two real compile errors, the
 `block-availability` scoping bug, and the queue join logic. I'd want to
 re-verify the corrected plan the same way — against real source, not
 against my own prose — before calling it ready a second time.
+
+---
+
+## Re-Verification (fix pass complete)
+
+Every fix below was written against the exact confirmed facts established
+above — not re-derived from memory — and cross-checked against the final
+plan text after writing it (via direct `Read`/`Grep` on the plan file, not
+recall of having written it). A brace-balance scan of all 73 TypeScript
+code blocks in the corrected plan found one mismatch, which is a
+deliberate partial snippet (Task 2, showing an edit inside an existing
+file) — not a real defect.
+
+| # | Defect | Fixed in | How |
+|---|---|---|---|
+| 1 | Booking contract can't work | Global Constraints, Task 21, Task 25 | `$book` applied to the exact proposed `Appointment` (with `contained` Slot) `$find` returns — never hand-reconstructed |
+| 2 | `$hold` endpoint/body/response all wrong | Task 21, Task 25 | Real route (`Appointment/$book`), real `Parameters`-wrapped request, real `Parameters{return: Bundle}` response unwrapping (`extractBookedAppointment`) |
+| 3 | `$find` parsed as the wrong shape | Task 31 | Reads `response.parameter.find(p => p.name === 'return').resource` as a `Bundle<Appointment>`, extracts `.contained` Slots off each entry; `_count=100` now passed explicitly |
+| 4 | `$book` revalidation claim backwards | Global Constraints | Corrected: `$book` runs the identical validated/transactional path as `$hold` — switched to `$book`, removed the hold/confirm two-step and `agent-expire-holds` (Task 23) entirely |
+| 5 | Schedule availability extensions ignored | Task 19 | Two `SchedulingParameters` extensions per Schedule, each with its own `service` sub-extension and `duration` |
+| 6 | Specialty table materially wrong | Task 4, Task 11 | `DISEASE_SPECIALTIES` replaced with the real row-order-verified mapping from `specialty_mapping.py`; `Allergy and Immunology`/`General Surgery`/`Vascular Surgery` added to `SPECIALTY_TABLE`; seeder now writes real NUCC codes via `SPECIALTY_NUCC_CODES`, not labels |
+| 7 | Seeder deduplication broken | Task 6 | `withStableIdentifier()` attaches the identifier to all 7 kept resource types *before* the conditional-create that queries for it |
+| 8 | Seeder exceeds default size limit | Task 7, Task 9 | New `chunk-bundle.ts`: identity wave (small transaction) + reference-rewritten clinical chunks (≤300 entries each, `batch` type); `mode` now actually threaded into `transformBundle` |
+| 9 | Task 1 could stage reference repos | Task 1 | Fork's `.gitignore` explicitly excluded from the copy; root `.gitignore` merged, not overwritten |
+| 10 | Bot deployment doesn't deploy bots | Task 26 | Direct-deploy script now resolves `$bot-*-reference`/`$bot-*-id` placeholders and calls `$deploy` per bot, matching `UploadDataPage.tsx`'s real handler; `checkBotsUploaded`'s hard-coded list updated to the final 7-bot roster |
+| 11 | Booking destroys the summary Communication | Task 21 | Reads the existing Communication and spreads it before patching `recipient`/`about`/`status`/`sent` |
+| 12 | `block-availability` can cancel other doctors' appointments | Task 2 | Appointment-cancellation search now scoped by `actor=` (the blocking schedule's own actor) |
+| 13 | FR-2 history gap + compile error | Task 29, Task 28 | New `EncounterHistoryList.tsx` (practitioner/specialty/organization, since `PatientSummary` has no such section); `PatientPickerPage.tsx`'s bad `@mantine/core` `Document` import removed |
+| 14 | Queue summaries joined incorrectly | Task 34 | Joined by `Communication.about[0].reference` matching a specific Appointment id, not by patient; `QueueEntry` and its React key are now `appointmentId`-based |
+
+Bonus fixes made while implementing the above (found by re-reading real
+source/data during the fix pass, not originally flagged): `pass1-scan.ts`'s
+test fixture used a `Practitioner?identifier=...`-style reference for
+`Encounter.participant.individual` that the real corpus never produces
+(confirmed the real shape is a bare `urn:uuid:` matching the Practitioner's
+own `id`) — fixed the fixture to match; `upload.ts`'s retry logic treated
+*any* structured `OperationOutcome` as non-retryable, which would also skip
+retrying a genuine transient 5xx — now inspects the FHIR issue code;
+`agent-patient-chat.ts` used a hard-coded fake `sender` and never checked
+the NPI against a real booking relationship — both fixed; `SlotPickerPage.tsx`
+had a stuck-loader bug after a `slot_taken` response (`setSlots(undefined)`
+never re-triggered the fetch effect) — replaced with a named, re-callable
+fetch function; the seed CLI used `require.main === module`, a CJS-only
+idiom with no reliable ESM equivalent — replaced with the standard
+`import.meta.url` check.
+
+Not changed, by deliberate choice (see "Where I'd Push Back" above): the
+triage-language framing (added a cheap disclaimer instead of a redesign),
+the frontend scope limits that match this project's own stated POC NFRs,
+and the P1 items I didn't re-verify against source myself (NPPES
+taxonomy-drift, no-schema-validation-on-Gemini-output, etc.) — those remain
+open, tracked, and unaddressed in this pass; flagging that explicitly
+rather than implying they were silently resolved too.
