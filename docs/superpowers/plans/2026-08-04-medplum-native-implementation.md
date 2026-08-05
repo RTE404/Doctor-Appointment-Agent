@@ -298,9 +298,13 @@ SchedulePage.tsx as a read-only booked/blocked-time calendar."
 // tools/seed/disease-csv.test.ts
 import { writeFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { describe, expect, test } from 'vitest';
 import { parseDiseaseDescriptions } from './disease-csv';
+
+// ESM has no __dirname; this is the standard replacement (matches index.ts's Task 9 fix).
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('parseDiseaseDescriptions', () => {
   test('returns disease names in file order', () => {
@@ -419,7 +423,11 @@ Expected: `COUNT: 49`, confirming the audit's finding. Copy the printed array �
 import { describe, expect, test } from 'vitest';
 import { resolveSpecialty, ENCOUNTER_TYPE_SPECIALTY_MAP, SPECIALTY_NUCC_CODES, allPossibleSpecialtyLabels } from './specialty-resolver';
 import { readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+// ESM has no __dirname; this is the standard replacement (matches index.ts's Task 9 fix).
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('resolveSpecialty', () => {
   test('tier 1: substring-matches reasonText against a known disease name', () => {
@@ -484,7 +492,14 @@ Expected: FAIL — module doesn't exist.
 ```typescript
 // tools/seed/specialty-resolver.ts
 import { parseDiseaseDescriptions } from './disease-csv';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+// ESM has no __dirname; this is the standard replacement (matches index.ts's Task 9 fix).
+// This module is imported transitively (index.ts -> pass1-scan.ts -> specialty-resolver.ts)
+// and runs its DISEASE_NAMES lookup at import time, so a bare __dirname here crashes the
+// whole CLI before any seed logic executes.
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Ported VERBATIM (by row order, not by guessing) from the retired Python
 // specialty_mapping.py's SPECIALTIES_IN_FILE_ORDER — a correction pass
@@ -1713,8 +1728,12 @@ are not the identity mechanism.
 ```typescript
 // tools/seed/agent-config.test.ts
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { describe, expect, test } from 'vitest';
+
+// ESM has no __dirname; this is the standard replacement (matches index.ts's Task 9 fix).
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('data/core/agent-config.json', () => {
   const bundle = JSON.parse(readFileSync(join(__dirname, '../../data/core/agent-config.json'), 'utf-8'));
@@ -1878,7 +1897,7 @@ for resuming an interrupted large run without re-uploading completed files).
 
 **Interfaces:**
 - Consumes: `parseDiseaseDescriptions`, `scanPractitionerSpecialties`, `transformBundle` (Tasks 3–6), `uploadBundle`/`uploadPatientBundle` (Task 7).
-- Produces: a runnable CLI (`tsx tools/seed/index.ts [--limit N] [--slim|--full] [--dry-run]`).
+- Produces: a runnable CLI (`tsx tools/seed/index.ts [--limit N | --all] [--slim|--full] [--dry-run]`).
 
 - [ ] **Step 1: Write the failing test (argument parsing only)**
 
@@ -1896,8 +1915,14 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['--limit', '200'])).toStrictEqual({ limit: 200, mode: 'slim', dryRun: false });
   });
 
-  test('--full sets mode to full and clears the limit', () => {
-    expect(parseCliArgs(['--full'])).toStrictEqual({ limit: undefined, mode: 'full', dryRun: false });
+  test('--full alone keeps the default limit — selection and transform mode are independent', () => {
+    expect(parseCliArgs(['--full'])).toStrictEqual({ limit: 50, mode: 'full', dryRun: false });
+  });
+
+  test('--all clears the limit regardless of mode — the only way to select every file', () => {
+    expect(parseCliArgs(['--all'])).toStrictEqual({ limit: undefined, mode: 'slim', dryRun: false });
+    expect(parseCliArgs(['--slim', '--all'])).toStrictEqual({ limit: undefined, mode: 'slim', dryRun: false });
+    expect(parseCliArgs(['--full', '--all'])).toStrictEqual({ limit: undefined, mode: 'full', dryRun: false });
   });
 
   test('--dry-run sets dryRun true', () => {
@@ -1940,13 +1965,18 @@ export interface CliArgs {
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
+  // `mode` (slim/full transform) and `limit` (how many files to select) are deliberately
+  // orthogonal. `--full` used to also clear the limit, which made "run --slim against every
+  // file" inexpressible — there was no flag combination that meant "all 983 files, slim mode."
+  // `--all` is the one explicit way to select every file, independent of transform mode.
   const args: CliArgs = { limit: 50, mode: 'slim', dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--limit') {
       args.limit = Number(argv[++i]);
+    } else if (argv[i] === '--all') {
+      args.limit = undefined;
     } else if (argv[i] === '--full') {
       args.mode = 'full';
-      args.limit = undefined;
     } else if (argv[i] === '--slim') {
       args.mode = 'slim';
     } else if (argv[i] === '--dry-run') {
@@ -4714,7 +4744,7 @@ Replace `handleCancelAppointment` in `src/components/actions/AppointmentActions.
       // and deletes its Slot(s) in one step.
       await medplum.post(medplum.fhirUrl('Appointment', appointment.id as string, '$cancel'), {});
 
-      navigate('/Appointment/upcoming')?.catch(console.error);
+      navigate('/Appointment/upcoming');
       showNotification({
         icon: <IconCircleCheck />,
         title: 'Success',
@@ -5034,7 +5064,7 @@ The current implementation reads the Slot and PATCHes both the Slot and Appointm
         return;
       }
 
-      navigate(`/Appointment/${result.appointment.id}/details`)?.catch(console.error);
+      navigate(`/Appointment/${result.appointment.id}/details`);
       showNotification({
         icon: <IconCircleCheck />,
         title: 'Success',
@@ -5102,6 +5132,7 @@ broken — worth calling out plainly rather than glossing over:
 **Files:**
 - Modify: `src/scripts/deploy-bots.ts`
 - Modify: `src/pages/UploadDataPage.tsx`
+- Create: `tools/deploy-bots-direct.ts`
 
 **Interfaces:**
 - Consumes: every bot file from Tasks 17–25.
@@ -5152,65 +5183,87 @@ npm run build:bots
 
 Expected: `data/core/example-bots.json` is regenerated with all 7 bots (still containing the `$bot-{name}-reference`/`$bot-{name}-id` placeholders `deploy-bots.ts`'s existing pattern emits — resolving those is this step's job, not `build:bots`'s).
 
-Deploy with a script that replicates exactly what `UploadDataPage.tsx`'s real upload handler does — resolve each bot's placeholders against a created-or-found `Bot` resource, upload, **then call `$deploy`** with the compiled JS (skipping `$deploy` leaves the Bot resource created but not actually runnable):
+Deploy with a script that replicates exactly what `UploadDataPage.tsx`'s real upload handler does — resolve each bot's placeholders against a created-or-found `Bot` resource, upload, **then call `$deploy`** with the compiled JS (skipping `$deploy` leaves the Bot resource created but not actually runnable).
 
-```bash
-npx tsx -e "
+A prior version of this step shelled the script inline as `npx tsx -e "..."`, backslash-escaping every `$bot-`/`$deploy` token (`\$bot-...`, `\$deploy`) to survive being embedded in a quoted shell string, and never loaded `.env`. Backslash does not escape `$` in PowerShell — on this repository's actual Windows/PowerShell environment that corrupted the placeholder replacement and the deploy call before `tsx` ever saw them, and the three required Medplum env vars were undefined unless exported by hand first. The fix is to stop embedding source in a shell string at all: this is a checked-in file, run with a plain `npx tsx` invocation that needs no shell-specific quoting, and it loads `.env` itself.
+
+```typescript
+// tools/deploy-bots-direct.ts
 import { MedplumClient, getReferenceString } from '@medplum/core';
 import { readFileSync } from 'fs';
+import 'dotenv/config';
 
-const medplum = new MedplumClient({ baseUrl: process.env.MEDPLUM_BASE_URL });
-await medplum.startClientLogin(process.env.MEDPLUM_CLIENT_ID, process.env.MEDPLUM_CLIENT_SECRET);
-
-const bundle = JSON.parse(readFileSync('data/core/example-bots.json', 'utf-8'));
-const botEntries = bundle.entry.filter((e) => e.resource?.resourceType === 'Bot');
-
-// Get the current project id for the admin bot-creation endpoint — a bare
-// createResource({resourceType:'Bot',...}) skips the ProjectMembership
-// the admin endpoint creates, which a Bot needs to actually run as an
-// authenticated actor (confirmed against botinit.ts).
-const activeLogin = medplum.getActiveLogin();
-const projectId = activeLogin?.project?.reference?.split('/')[1];
-if (!projectId) {
-  throw new Error('Could not determine the active project id from the current login');
-}
-
-let bundleString = JSON.stringify(bundle);
-const botIds = {};
-for (const entry of botEntries) {
-  const botName = entry.resource.name;
-  let bot = await medplum.searchOne('Bot', { name: botName });
-  if (!bot) {
-    bot = await medplum.post('admin/projects/' + projectId + '/bot', { name: botName });
+async function main(): Promise<void> {
+  const clientId = process.env.MEDPLUM_CLIENT_ID;
+  const clientSecret = process.env.MEDPLUM_CLIENT_SECRET;
+  if (!process.env.MEDPLUM_BASE_URL || !clientId || !clientSecret) {
+    throw new Error('MEDPLUM_BASE_URL, MEDPLUM_CLIENT_ID, and MEDPLUM_CLIENT_SECRET must all be set (see .env)');
   }
-  botIds[botName] = bot.id;
-  bundleString = bundleString
-    .replaceAll('\$bot-' + botName + '-reference', getReferenceString(bot))
-    .replaceAll('\$bot-' + botName + '-id', bot.id);
-}
+  const medplum = new MedplumClient({ baseUrl: process.env.MEDPLUM_BASE_URL });
+  await medplum.startClientLogin(clientId, clientSecret);
 
-await medplum.executeBatch(JSON.parse(bundleString));
+  const bundle = JSON.parse(readFileSync('data/core/example-bots.json', 'utf-8'));
+  const botEntries = bundle.entry.filter((e: any) => e.resource?.resourceType === 'Bot');
 
-// Match each bot's OWN executableCode.url to its own Binary entry by
-// fullUrl — the earlier version of this script grabbed 'the first
-// JavaScript Binary' once, outside this loop, so every bot got the same
-// code. This is exactly the pattern UploadDataPage.tsx's real upload
-// handler uses (confirmed by reading it directly).
-for (const entry of botEntries) {
-  const botName = entry.resource.name;
-  const distUrl = entry.resource.executableCode?.url;
-  const distBinaryEntry = bundle.entry.find((e) => e.fullUrl === distUrl);
-  if (!distBinaryEntry?.resource?.data) {
-    throw new Error('Could not find compiled code Binary for bot: ' + botName);
+  // Get the current project id for the admin bot-creation endpoint — a bare
+  // createResource({resourceType:'Bot',...}) skips the ProjectMembership
+  // the admin endpoint creates, which a Bot needs to actually run as an
+  // authenticated actor (confirmed against botinit.ts).
+  const activeLogin = medplum.getActiveLogin();
+  const projectId = activeLogin?.project?.reference?.split('/')[1];
+  if (!projectId) {
+    throw new Error('Could not determine the active project id from the current login');
   }
-  const code = Buffer.from(distBinaryEntry.resource.data, 'base64').toString('utf-8');
-  await medplum.post(medplum.fhirUrl('Bot', botIds[botName], '\$deploy'), { code });
-  console.log('Deployed', botName);
+
+  let bundleString = JSON.stringify(bundle);
+  const botIds: Record<string, string> = {};
+  for (const entry of botEntries) {
+    const botName = entry.resource.name;
+    let bot = await medplum.searchOne('Bot', { name: botName });
+    if (!bot) {
+      bot = await medplum.post('admin/projects/' + projectId + '/bot', { name: botName });
+    }
+    botIds[botName] = bot.id;
+    // No backslashes needed — this is a real .ts file, not a shell-quoted string, so `$`
+    // is a plain character here with no escaping semantics to fight.
+    bundleString = bundleString
+      .replaceAll('$bot-' + botName + '-reference', getReferenceString(bot))
+      .replaceAll('$bot-' + botName + '-id', bot.id);
+  }
+
+  await medplum.executeBatch(JSON.parse(bundleString));
+
+  // Match each bot's OWN executableCode.url to its own Binary entry by
+  // fullUrl — the earlier version of this script grabbed 'the first
+  // JavaScript Binary' once, outside this loop, so every bot got the same
+  // code. This is exactly the pattern UploadDataPage.tsx's real upload
+  // handler uses (confirmed by reading it directly).
+  for (const entry of botEntries) {
+    const botName = entry.resource.name;
+    const distUrl = entry.resource.executableCode?.url;
+    const distBinaryEntry = bundle.entry.find((e: any) => e.fullUrl === distUrl);
+    if (!distBinaryEntry?.resource?.data) {
+      throw new Error('Could not find compiled code Binary for bot: ' + botName);
+    }
+    const code = Buffer.from(distBinaryEntry.resource.data, 'base64').toString('utf-8');
+    await medplum.post(medplum.fhirUrl('Bot', botIds[botName], '$deploy'), { code });
+    console.log('Deployed', botName);
+  }
 }
-"
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
 ```
 
-(Alternatively, sign into the deployed frontend and use the fork's existing `UploadDataPage` at `/upload/bots`, which already does all of the above correctly — confirmed by reading its source — including the per-bot Binary matching and proper admin-endpoint bot creation. Step 3 fixes its bot-count check so that path also works correctly with this plan's 7-bot roster. The script above exists for CI/scripted deployment; prefer the UI page if signing in manually is convenient.)
+```bash
+npx tsx tools/deploy-bots-direct.ts
+```
+
+This one command line works identically in PowerShell and Bash — there is no inline source for either shell to reinterpret.
+
+(Alternatively, sign into the deployed frontend and use the fork's existing `UploadDataPage` at `/upload/bots`, which already does all of the above correctly — confirmed by reading its source — including the per-bot Binary matching and proper admin-endpoint bot creation. Step 3 fixes its bot-count check so that path also works correctly with this plan's 7-bot roster. `tools/deploy-bots-direct.ts` exists for CI/scripted deployment; prefer the UI page if signing in manually is convenient.)
 
 - [ ] **Step 3: Fix `checkBotsUploaded`'s hard-coded bot list in `UploadDataPage.tsx`**
 
@@ -5256,8 +5309,8 @@ If `$find` returns zero slots or errors, the most likely cause is the `Schedulin
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/scripts/deploy-bots.ts src/pages/UploadDataPage.tsx
-git commit -m "fix(deploy): register final agent bot roster, fix direct-deploy to resolve placeholders and call \$deploy, fix UploadDataPage's bot count check"
+git add src/scripts/deploy-bots.ts src/pages/UploadDataPage.tsx tools/deploy-bots-direct.ts
+git commit -m "fix(deploy): register final agent bot roster, move direct-deploy to a checked-in script that resolves placeholders and calls the deploy operation, fix UploadDataPage bot count check"
 ```
 
 ---
@@ -5716,7 +5769,7 @@ export function PatientHistoryPage(): JSX.Element {
         intent: { ...result.intent, complaintText },
         summaryCommunicationId: result.summaryCommunicationId,
       });
-      navigate(`/agent/${patientId}/doctors`)?.catch(console.error);
+      navigate(`/agent/${patientId}/doctors`);
     } catch (err) {
       setError(normalizeErrorString(err));
     } finally {
@@ -5837,7 +5890,7 @@ export function DoctorResultsPage(): JSX.Element {
 
   useEffect(() => {
     if (!booking.intent) {
-      navigate(`/agent/${patientId}`)?.catch(console.error);
+      navigate(`/agent/${patientId}`);
       return;
     }
     medplum
@@ -5851,7 +5904,7 @@ export function DoctorResultsPage(): JSX.Element {
 
   function handleSelect(candidate: Candidate): void {
     setBooking({ ...booking, chosenCandidate: candidate });
-    navigate(`/agent/${patientId}/doctors/${candidate.npi}/slots`)?.catch(console.error);
+    navigate(`/agent/${patientId}/doctors/${candidate.npi}/slots`);
   }
 
   return (
@@ -5992,7 +6045,7 @@ export function SlotPickerPage(): JSX.Element {
 
   const fetchSlots = useCallback(async (): Promise<void> => {
     if (!booking.intent) {
-      navigate(`/agent/${patientId}`)?.catch(console.error);
+      navigate(`/agent/${patientId}`);
       return;
     }
     setSlots(undefined);
@@ -6063,7 +6116,7 @@ export function SlotPickerPage(): JSX.Element {
         await fetchSlots(); // actually re-fetch, not just clear-and-hope
         return;
       }
-      navigate(`/agent/${patientId}/confirmed/${result.appointment.id}`)?.catch(console.error);
+      navigate(`/agent/${patientId}/confirmed/${result.appointment.id}`);
     } catch (err) {
       setError(normalizeErrorString(err));
     } finally {
@@ -6592,6 +6645,15 @@ for). `--slim` and `--full` were always meant to be mutually exclusive
 alternatives, not stackable flags — the real full-*corpus* run (all 983
 files) uses **slim mode** (the default), not `--full`.
 
+Also flagged and addressed: `parseCliArgs` (Task 9) used to have `--full`
+clear the file-selection `limit` as a side effect, while `--slim` left the
+default `limit: 50` untouched. That made "transform every file in slim
+mode" — the actual full-corpus run this task exists to perform — inexpressible
+by any documented flag combination: `--slim` alone silently capped the run
+at 50/983 files with no error. `limit` (file selection) and `mode` (slim/full
+transform) are now independent; `--all` is the one explicit flag that clears
+the limit, regardless of mode. Step 3 below passes it explicitly.
+
 Also flagged and addressed: the resumability manifest (`.seed-manifest.json`,
 Task 9) is keyed only by absolute file path — it has no awareness of which
 Medplum project/base URL it was built against, which `mode` was used, or
@@ -6617,7 +6679,7 @@ If Task 10's `--limit 50` run was ever pointed at the same Medplum project this 
 - [ ] **Step 2: Delete any stale manifest for this target**
 
 ```bash
-rm -f .seed-manifest.json
+node -e "require('fs').rmSync('.seed-manifest.json', { force: true })"
 ```
 
 The manifest isn't scoped by target project/mode/transform version — if there's any doubt whether an existing `.seed-manifest.json` was built against a different project or an earlier version of this plan's transform code, delete it rather than risk it silently skipping files that were never actually uploaded to *this* target.
@@ -6625,10 +6687,10 @@ The manifest isn't scoped by target project/mode/transform version — if there'
 - [ ] **Step 3: Run the full corpus in slim mode**
 
 ```bash
-npx tsx tools/seed/index.ts --slim
+npx tsx tools/seed/index.ts --slim --all
 ```
 
-(No `--limit` — every file in `fhir/`. `--slim` is the default, spelled out here to be explicit about the actual intent: keep only the 7 app-read resource types, not `--full`, which would ingest Observations/Claims/etc. this application never reads.) Expected: completes without throwing; final log line `Done. Uploaded 983 bundles this run (983 total per manifest).`
+(`--all` clears the file-selection limit — this is the only command that actually selects all 983 files; `--slim` alone would silently cap at the default 50. `--slim` is also the default mode, spelled out here to be explicit about the actual intent: keep only the 7 app-read resource types, not `--full`, which would ingest Observations/Claims/etc. this application never reads.) Expected: completes without throwing; final log line `Done. Uploaded 983 bundles this run (983 total per manifest).`
 
 - [ ] **Step 4: Spot-check for duplicate Practitioners at full scale**
 
