@@ -1,13 +1,8 @@
 # Doctor Appointment Agent — Functional Specification
 
-> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
-> banner for the full list (booking uses `$book` not `$hold`/`$confirm`,
-> no `agent-expire-holds`, native `$cancel`, per-service `SchedulingParameters`).
-> Specifically here: **FR-10**'s "via `$hold`'s atomic check" and the
-> traceability table's `$hold → $confirm` references are stale — read
-> "`$book`'s atomic check" instead. The implementation plan
-> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
-> is authoritative on these points.
+> **Synchronized 2026-08-05:** This specification matches the authoritative
+> implementation plan at
+> `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`.
 
 Formalizes the workflow from `Doctor_Appointment_Agent_Context.md` and the
 HLD into testable functional requirements, now covering both the
@@ -35,10 +30,10 @@ new, covering the doctor-facing flow.
 | FR-6 | System searches NPPES when no exact previous match exists | `agent-find-doctors` falls through to an NPPES-backed search, filtered by specialty + patient location, ranked by distance |
 | FR-7 | User can always choose to search for a new doctor, even if a previous match exists | `agent-find-doctors`'s response includes both the previous-physician result (if any) and the NPPES candidate list together |
 | FR-8 | System shows available slots for a selected doctor | `agent-ensure-doctor` lazily provisions the doctor's `Practitioner`/`PractitionerRole`/`Schedule` (via `ensurePractitionerAndSchedule`) on first request for that NPI and returns the ids; the UI then calls `$find` directly against that `Schedule` |
-| FR-9 | User can book a slot and receive confirmation | `agent-book-appointment` returns a confirmation (doctor, patient, time) for a valid, still-open slot; confirmation page shows the doctor's NPI prominently |
-| FR-10 | System prevents double-booking | Booking an already-held/booked slot returns `{ok: false, reason: 'slot_taken'}` via `$hold`'s atomic check; no duplicate `Appointment` is created |
+| FR-9 | User can book a slot and receive confirmation | The browser sends only patient/practitioner/schedule ids, selected `start`/`end`, and `summaryCommunicationId`. `agent-book-appointment` re-reads the authoritative FHIR resources, repeats `$find` server-side, validates the fresh proposal, calls `$book`, and returns the booked Appointment; the confirmation page shows the doctor's NPI prominently. |
+| FR-10 | System prevents double-booking | If no exact proposal remains or `$book` reports the requested time is unavailable, booking returns `{ok: false, reason: 'slot_taken'}`; `$book` revalidates availability in a serializable transaction, so no duplicate `Appointment` is created. |
 | FR-11 | Doctor can look up their patient queue by NPI | `/desk/:npi` shows every patient who has ever booked with that NPI, newest first — a display filter, not a login (see HLD §9) |
-| FR-12 | Each queued patient shows an AI-generated pre-visit summary and their stated issue | The summary is generated once, at complaint-submission time, by `agent-intake`, and persisted immediately as a `Communication` (`status: preparation`, no recipient yet); `agent-book-appointment` only updates that same Communication's `recipient`/`about`/`status` once the doctor is chosen — it never regenerates the summary. The "stated issue" is `Appointment.description`, written by `agent-book-appointment` from the same intake output. Neither is regenerated on page load. |
+| FR-12 | Each queued patient shows an AI-generated pre-visit summary and their stated issue | The summary is generated once by `agent-intake` and persisted as the authoritative preparation `Communication`, together with normalized specialty (`topic`), reason (`reasonCode`), original complaint (`note`), and urgency (`priority`). The booking Bot derives Appointment metadata from that resource, never from browser-echoed clinical fields, and links the same Communication to the booked Appointment. Neither artifact is regenerated on page load. |
 | FR-13 | Doctor can chat with an AI agent grounded in a specific patient's real record | `agent-patient-chat` re-reads that patient's live Medplum data on every message and answers only from it |
 | FR-14 | The chat agent must never diagnose, interpret, or give clinical/medical advice, even if directly asked | Verified by asking a diagnostic-framed question ("what do you think this means") and confirming the fixed refusal response, not an opinion |
 | FR-15 | Every chat question and answer is auditable after the fact | Persisted as threaded `Communication` resources (`category: ai-chat`), retrievable via a search on that patient/practitioner |
@@ -48,10 +43,14 @@ new, covering the doctor-facing flow.
 Deliberately minimal for a POC — see HLD §10 for the full list of what's
 explicitly **not** designed (scalability, multi-tenancy, performance
 targets, custom security/observability layers). Two NFRs that matter here:
-booking must be atomic (FR-10, backed by Medplum's `$hold`/`$confirm`), and
+booking must be atomic (FR-10, backed by Medplum's `$book` transaction), and
 the doctor-chat agent's non-diagnostic boundary must hold under adversarial
 questioning (FR-14) — this is treated as a correctness requirement, not
 just a nice-to-have.
+
+All `@medplum/*` packages must resolve to the same exact version,
+`5.1.27`. The target server must pass the plan's deterministic-id and live
+scheduling-operation preflights before seed or release claims.
 
 ## Data Requirements
 
@@ -60,7 +59,9 @@ list. Summary: patient-side clinical data is read-only from Medplum
 (seeded once from Synthea); doctor/scheduling/AI-artifact data
 (`Practitioner`, `PractitionerRole`, `Schedule`, `Appointment`,
 `Communication`, `Device`) is created lazily and written to Medplum by the
-app itself.
+app itself. Seeded and bootstrap resources use deterministic
+`PUT ResourceType/{id}` upserts so their references remain valid across
+chunked uploads and retries.
 
 ## Assumptions
 
@@ -78,7 +79,7 @@ authentication.
 | FR-5, FR-7 | `/agent/:patientId/doctors` | `agent-find-doctors` |
 | FR-6 | `/agent/:patientId/doctors` | `agent-find-doctors` → NPPES |
 | FR-8 | `/agent/:patientId/doctors/:npi/slots` | `agent-ensure-doctor` (wraps `ensurePractitionerAndSchedule`) + direct `$find` |
-| FR-9, FR-10 | `/agent/:patientId/confirmed/:apptId` | `agent-book-appointment` (`$hold` → `$confirm`) |
+| FR-9, FR-10 | `/agent/:patientId/confirmed/:apptId` | `agent-book-appointment` (authoritative reads → fresh Bot-side `$find` → `$book`) |
 | FR-11 | `/desk/:npi` | Direct FHIR search (`Practitioner`, `Appointment`, `Communication`) |
 | FR-12 | `/desk/:npi` | `agent-intake` (summary generated at complaint-submission time; updated, not regenerated, by `agent-book-appointment` at booking time) |
 | FR-13, FR-14, FR-15 | `/desk/:npi/patients/:patientId` | `agent-patient-chat` |

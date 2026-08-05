@@ -1,14 +1,8 @@
 # Doctor Appointment Agent — Backend Structure
 
-> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
-> banner for the full list. Specifically here: `agent-expire-holds.ts` and
-> `cancel-appointment.ts` no longer exist in the bot roster (no hold state
-> to expire; cancellation uses Medplum's native `$cancel` directly); the
-> roster also gains `agent-ensure-doctor.ts`, `reschedule-appointment.ts`
-> (new), and `lib/chunk-bundle.ts`. The implementation plan
-> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
-> has the current file layout — treat it as authoritative on the exact
-> bot/tool roster.
+> **Synchronized 2026-08-05:** This module map matches the authoritative
+> implementation plan at
+> `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`.
 
 Supersedes the Python/FastAPI-era Backend doc. There is no longer a
 separate backend service — this document covers the two things that
@@ -55,8 +49,7 @@ src/
     zip3-centroids.ts                 # ~900-row 3-digit-zip centroid table
   bots/
     core/
-      block-availability.ts           # UNCHANGED
-      cancel-appointment.ts           # MODIFIED — now deletes the released Slot (was orphaning it)
+      block-availability.ts           # MODIFIED — cancellation search scoped to the Schedule actor
       reschedule-appointment.ts       # NEW — RescheduleAppointment.tsx previously had no bot backing
     agent/
       agent-intake.ts
@@ -64,7 +57,6 @@ src/
       agent-ensure-doctor.ts          # NEW — thin wrapper bot around ensurePractitionerAndSchedule
       agent-book-appointment.ts
       agent-patient-chat.ts
-      agent-expire-holds.ts
       lib/
         ensurePractitionerAndSchedule.ts   # shared lib, not a bot — called only by agent-ensure-doctor
         patientContext.ts                   # loadPatientClinicalContext(), shared by agent-intake + agent-patient-chat
@@ -74,7 +66,7 @@ src/
         prompts.ts                            # system prompts for both LLM calls
       *.test.ts                       # colocated, per the fork's existing convention
   scripts/
-    deploy-bots.ts                   # MODIFIED — extend the Bots[] array with agent bots
+    deploy-bots.ts                   # MODIFIED — final 7-bot roster, placeholder resolution, per-bot $deploy
 
 tools/
   seed/                              # standalone TypeScript/Node CLI, NOT a bot
@@ -82,12 +74,13 @@ tools/
     disease-csv.ts                     # parses Disease_Description.csv
     specialty-resolver.ts               # ported 41-row table + tiered matcher
     pass1-scan.ts                        # streams all bundles → practitioner→reason-text map
-    pass2-transform.ts                    # per-bundle rewrite (conditional-create, filter, timezone)
-    upload.ts                              # transaction POST with concurrency + retry
+    pass2-transform.ts                    # deterministic PUT ids, reference rewrite, filter, timezone
+    chunk-bundle.ts                       # identity transaction + capped clinical/other batches
+    upload.ts                              # executeBatch retry + per-entry failure detection
 
 data/
   core/
-    agent-config.json                # HealthcareService(s), Device, CodeSystem/ValueSet — uploadable via UploadDataPage
+    agent-config.json                # deterministic-PUT HealthcareServices, Device, CodeSystem/ValueSet
 ```
 
 `fhir/*.json` (983 Synthea bundles) and `Disease_Description.csv` stay at
@@ -112,8 +105,8 @@ else.
 
 ## Core Dependencies
 
-- `@medplum/react`, `@medplum/core`, `@medplum/fhirtypes` — already in the
-  forked repo; no Medplum-specific SDK needs adding
+- Every `@medplum/*` dependency and devDependency is pinned exactly to
+  `5.1.27`; mixed Medplum package versions are not allowed
 - `react-router` — already in the fork, used for the new `/agent/*` and
   `/desk/*` routes the same way as every existing page
 - Bots run in Medplum's own sandboxed runtime (Node-based; global `fetch`
@@ -149,17 +142,25 @@ else.
   encounter history at seed time; the config table maps a *specialty
   code* to an NPPES taxonomy string at query time. Different inputs,
   different jobs, don't conflate them into one file.
+- **Authoritative booking boundary**: `agent-intake` stores normalized
+  specialty, reason, complaint, urgency, and summary in a preparation
+  `Communication`. `agent-book-appointment` accepts only ids and selected
+  times, re-reads that Communication plus Patient/Practitioner/Schedule,
+  validates the specialty and service relationship, repeats `$find`
+  server-side, and passes that fresh proposal to `$book` through a URL
+  built with `medplum.fhirUrl(...)`.
 
 ## Module Dependency Direction
 
 ```
-pages/agent/*, pages/desk/*  →  bots/agent/*, bots/core/*  (via medplum.executeBot)
+pages/agent/*, pages/desk/*  →  bots/agent/*, reschedule-appointment  (via medplum.executeBot)
 pages/agent/*, pages/desk/*  →  Medplum directly (via useMedplum(), for anything not requiring a bot)
+AppointmentActions.tsx  →  Medplum native Appointment/{id}/$cancel (via medplum.fhirUrl)
 bots/agent/agent-ensure-doctor.ts  →  bots/agent/lib/ensurePractitionerAndSchedule.ts
 bots/agent/agent-intake.ts, agent-patient-chat.ts  →  bots/agent/lib/patientContext.ts
 bots/agent/*  →  bots/agent/lib/{geo,ranking,nppes,prompts}.ts
 bots/agent/*, src/pages/**  →  src/config/specialties.ts
-bots/core/reschedule-appointment.ts  →  (reuses cancel-appointment.ts's Slot-delete logic inline, no shared lib)
+bots/core/reschedule-appointment.ts  →  Medplum native Appointment/$book and Appointment/{id}/$cancel
 tools/seed/*  →  (nothing in src/ — fully standalone, shares no runtime code with the bots or frontend)
 ```
 

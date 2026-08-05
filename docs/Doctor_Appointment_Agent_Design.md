@@ -1,23 +1,8 @@
 # Doctor Appointment Agent — Application Design
 
-> ⚠️ **Superseded on specific points by the implementation plan
-> (2026-08-05 correction pass).** This doc and the LLD/Specs/HLD/Data
-> Model/Backend/Context docs are still the source of truth for
-> architecture and rationale — but `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`
-> is authoritative wherever the two disagree on these specific points,
-> confirmed against real Medplum source after this doc was written:
-> booking uses a single **`$book`** call (not `$hold`→`$confirm`) applied
-> to the exact proposed Appointment `$find` returns, with the missing
-> Patient participant added before booking; there is **no `agent-expire-holds`
-> bot** (no hold state exists to expire); cancellation uses Medplum's
-> **native `$cancel`** operation directly (no hand-rolled
-> `cancel-appointment.ts` bot); `Schedule` needs **two** `SchedulingParameters`
-> extensions (one per HealthcareService, each with a `service` sub-extension
-> and an explicit `alignmentInterval`), not one. See
-> `docs/Issues_Audit_Response.md` for the full verification trail. This
-> doc will be reconciled in a future pass; until then, treat the plan as
-> authoritative on these points and this doc as authoritative on
-> everything else.
+> **Synchronized 2026-08-05:** This design matches the authoritative
+> implementation plan at
+> `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`.
 
 Supersedes the original Python/FastAPI + Streamlit design. New
 requirements made this a Medplum-native, two-sided application; the
@@ -25,7 +10,7 @@ Python implementation (8 of 14 tasks completed, in
 `.claude/worktrees/doctor-appointment-agent-impl`) is retired in favor of
 the design below. Everything here was validated against two local
 checkouts provided during design: the Medplum monorepo itself
-(`medplum/`, commit `87cf429`) and the fork target
+(`medplum/`, package line `5.1.27`) and the fork target
 (`medplum-scheduling-demo/`) — claims are marked **confirmed** where they
 were checked directly against that source, not just documentation.
 
@@ -39,7 +24,8 @@ AI-generated pre-visit summary and chat with an agent grounded in that
 patient's real record.
 
 **Non-goals:** diagnosis, adaptive questionnaires, clinical decision
-support, medication recommendations, cancellations, waitlists, reminders,
+support, medication recommendations, patient-agent cancellation or
+rescheduling flows, waitlists, reminders,
 recurring appointments, real authentication for doctors (see §"Doctor
 identifier & access model"), and — critically — no clinical
 judgment/advice from either AI surface, even when directly asked.
@@ -48,7 +34,7 @@ judgment/advice from either AI surface, even when directly asked.
 
 | Layer | Choice | Why |
 |---|---|---|
-| Frontend | Fork of `medplum-scheduling-demo` (React + Vite + `@medplum/react`) | Already implements a provider-side Schedule/Appointment UI and a patient chart with booking — confirmed by direct inspection of the cloned repo, not just its README |
+| Frontend | Fork of `medplum-scheduling-demo` (React + Vite + `@medplum/react`) with every `@medplum/*` package pinned exactly to `5.1.27` | Already implements a provider-side Schedule/Appointment UI and a patient chart with booking; a single exact Medplum package family avoids client/operation contract drift |
 | Backend logic | Medplum Bots (TypeScript, sandboxed serverless functions) | The project's "build natively on Medplum" requirement rules out a separate backend service; Bots are Medplum's only backend-logic mechanism |
 | Datastore | Medplum only | Patient/clinical data, doctor records, scheduling, and the AI-generated summaries/chat all live here — no separate database |
 | Doctor discovery | NPPES API | Unchanged from the original design — directory-only, no availability |
@@ -70,15 +56,16 @@ inspection of the Medplum monorepo, not assumption:
    client inside the bot runtime, which only makes sense if bots can reach
    the outside internet. This is what makes calling Gemini and NPPES from
    a Bot viable at all.
-2. **`Appointment/$find`/`$hold`/`$confirm` are real, implemented, and
-   unconditionally routed** — confirmed in `packages/server/src/fhir/
-   operations/{find,hold,confirm}.ts` (each with its own test file) and
-   `packages/server/src/fhir/routes.ts` (plain always-on routes, no
-   feature flag). One honest caveat: this confirms the *source*, dated
-   2026-08-02 — whichever Medplum server actually gets deployed to should
-   get one live `$find` check before relying on it, to confirm the
-   deployed version matches. `medplum-scheduling-demo` itself does **not**
-   use these operations (see §4) — it predates them.
+2. **`Appointment/$find`, `$book`, and instance-level `$cancel` are real,
+   implemented operations.** `$book` takes a `Parameters` request whose
+   `appointment` parameter contains the proposed Appointment; `$find` and
+   `$book` return bare `Bundle` resources, not `Parameters` envelopes.
+   `$book` runs the same availability validation as `$hold` inside a
+   serializable transaction, so this immediate-confirmation flow needs no
+   hold/confirm phase or expiry job. Every operation URL is built with
+   `medplum.fhirUrl(...)`. The target server still must pass the live
+   contract preflight before release; source/package compatibility is not
+   inferred from a hosted server's version label alone.
 
 ## 4. Fork strategy
 
@@ -86,42 +73,30 @@ Fork `github.com/medplum/medplum-scheduling-demo`. Verified directly
 against the cloned repo — every file below was confirmed to exist with
 that exact name and role, not inferred from the README.
 
-- **Keep untouched**: `vite.config.ts`, `esbuild-script.mjs`,
-  `src/main.tsx`, `src/config.ts`, `src/Schedule.context.ts`,
-  `SignInPage`, `LandingPage`, `SearchPage`, `ResourcePage`,
-  `UploadDataPage`, `PatientPage`, `PatientSchedulePage`,
-  `AppointmentDetailPage`, `AppointmentsPage`, all of `src/components/**`,
-  `src/bots/core/block-availability.ts`.
-  `src/scripts/deploy-bots.ts` — extend its `Bots: BotDescription[]` array
-  with the new bots (§6), don't rewrite its pattern: it already emits
-  `Bot` resources keyed by `identifier: [{system: 'http://example.com',
-  value: botName}]` via a conditional `PUT`, which is how the frontend
-  calls bots by name (`medplum.executeBot({system, value}, ...)`), not a
-  hardcoded UUID.
-- **Modify (bug fixes in "keep untouched" territory, found during audit)**:
-  `src/bots/core/cancel-appointment.ts` — confirmed to orphan its held
-  `Slot` (never deletes it on cancel, leaving a permanent phantom block);
-  fixed to delete the Slot(s) referenced by `Appointment.slot[]` once the
-  Appointment is cancelled (LLD). `RescheduleAppointment.tsx` — confirmed
-  to have **no bot backing at all**; its UI action previously called
-  nothing. Given a new `src/bots/core/reschedule-appointment.ts` (LLD) —
-  hold the new time, confirm, then cancel+delete-Slot the original,
-  leaving the original booking untouched if the new time can't be held.
-- **Delete**: `src/bots/example/*` (Synthea data replaces the built-in
-  demo data), `src/bots/core/set-availability.ts` + its UI action — this
-  bot materializes `status: free` Slot resources, a model superseded now
-  that `$find` computes free time live. Keep its code as a reference only
-  if the live-server check in §3 ever surfaces a version mismatch on the
-  deployed target.
-- **Modify**: `src/App.tsx` — confirmed to be a standard `react-router`
-  `<Routes>` tree inside `@medplum/react`'s `<AppShell>` with a `menus`
-  prop driving the left nav; add two new route trees (§5) as additional
-  `<Route>` entries plus two new `menus` groups ("Patient Agent", "Doctor
-  Desk"), following the existing pattern exactly.
-  `src/pages/SchedulePage.tsx` — confirmed it fetches via
-  `medplum.searchResources('Slot', ...)`, not `$find`. Since `$find`
-  computes free time rather than materializing it, this calendar view
-  needs relabeling to "booked & blocked time" or re-sourcing from `$find`.
+- **Copy the scaffold without nesting Git state**: copy the fork into the
+  repository root while excluding `.git`, build artifacts, dependencies,
+  and the fork's `.gitignore`. Merge ignore rules into the root file and
+  track the generated `package-lock.json`.
+- **Delete the superseded free-slot path**: remove
+  `set-availability.ts`, `book-appointment.ts`, their tests, and
+  `CreateAppointment.tsx`. Strip only the free-slot branch from
+  `CreateUpdateSlot.tsx`; keep the busy-unavailable blocking path.
+- **Keep and fix provider operations**: scope
+  `block-availability.ts` to the blocking Schedule's actor. Delete the
+  custom `cancel-appointment.ts` bot and call Medplum's atomic native
+  `$cancel` from `AppointmentActions.tsx`. Add
+  `reschedule-appointment.ts`, which books the replacement through
+  `$book`, preserves Appointment metadata, re-links the summary, and then
+  cancels the original through native `$cancel`.
+- **Modify the shell**: add the `/agent/*` and `/desk/*` routes and menus
+  in `App.tsx`. Make `SchedulePage.tsx` a read-only booked-and-blocked
+  calendar, because `$find` computes free time instead of persisting free
+  Slots.
+- **Deploy the final seven Bots correctly**: update `deploy-bots.ts` and
+  `UploadDataPage.tsx` for `block-availability`,
+  `reschedule-appointment`, and the five agent Bots. Resolve each Bot's
+  placeholders, match its own compiled Binary, create missing Bots through
+  the project admin endpoint, and invoke that Bot's `$deploy` operation.
 
 ## 5. Routes
 
@@ -156,20 +131,26 @@ them.
 
 | Bot | Trigger | Does |
 |---|---|---|
-| `agent-intake` | `$execute`, once per complaint submission | Reads the patient's Condition/MedicationRequest/AllergyIntolerance/Encounter. One Gemini call (temp 0, JSON mode) returns `{specialty, reason, urgency, summary}` in one shot — one LLM call produces both the intent and the pre-visit summary. Persists the summary immediately as a `Communication` (status `preparation`, no recipient yet). Normalizes the LLM's specialty string against a fixed NUCC-code table; if it can't confidently map, returns a clarification request rather than guessing. |
+| `agent-intake` | `$execute`, once per complaint submission | Reads the patient's Condition/MedicationRequest/AllergyIntolerance/Encounter. One Gemini call (temp 0, JSON mode) returns `{specialty, reason, urgency, summary}` in one shot. Persists the result immediately as an authoritative `Communication`: `topic` is the normalized NUCC specialty, `reasonCode` is the concise reason, `note` preserves the original complaint, and `priority` stores urgency. The resource remains `preparation` with no recipient until booking. If the specialty cannot be mapped confidently, the bot asks for clarification instead of guessing. |
 | `agent-find-doctors` | `$execute` | Previous-physician path: `Encounter→Practitioner` for this patient, filtered by an **exact** `PractitionerRole.specialty` match (confirmed real search parameter) against the LLM-inferred specialty. **Ranking rule**: a previous physician is only ever surfaced when that exact match succeeds — if it does, shown first, ahead of every NPPES candidate, regardless of distance (**tie-break**: most-recent `Encounter` wins if multiple previous practitioners match). No exact match → no previous-physician result at all (not a fuzzy/partial inclusion), list is purely NPPES candidates. New-doctor path: NPPES search via the ported specialty→taxonomy table, ranked by distance (§8) among themselves. Returns top ~10 with a `source: previous\|nppes` badge. Writes nothing — candidates aren't persisted until one is booked, and it never provisions a Practitioner/Schedule itself (that's `agent-ensure-doctor`, below). |
 | `agent-ensure-doctor` | `$execute`, once per slot-picker page load | Thin wrapper around `ensurePractitionerAndSchedule` (below) — exists as its own bot because provisioning may need an NPPES lookup (no CORS, must run bot-side). Returns `{practitionerId, scheduleId, healthcareServiceIds: {routine, urgent}}`; the UI then calls `$find` directly with the id matching the patient's `urgency`. This is the only caller of `ensurePractitionerAndSchedule` — not `agent-find-doctors`, and never the UI directly. |
-| *(shared lib, not a bot)* `ensurePractitionerAndSchedule` | called only by `agent-ensure-doctor` | Conditional-create (`ifNoneExist`) of `Practitioner` (keyed on NPI identifier) + `PractitionerRole` (specialty, queryable) + `Schedule` with NPI-seeded deterministic weekly availability (working days/hours/lunch gap derived from a hash of the NPI) + mandatory timezone extension (see §7's gotcha) + `serviceType` listing **both** HealthcareServices. No independent trigger — doesn't earn a separate bot/deployment artifact beyond the wrapper above. |
-| `agent-book-appointment` | `$execute` | Builds a proposed Appointment (no `contained` Slot — `$hold` creates/owns a real top-level Slot itself, referenced afterward via standard `Appointment.slot[]`) → `$hold` → `$confirm` — deliberately not the simpler one-shot `$book` operation (confirmed by reading `book.ts`: it creates an Appointment as `booked` directly with no re-check that the slot is still free, which would reopen the double-booking race `$hold`'s atomic check exists to close). On success: writes `Appointment.description` (the "stated issue" shown to the doctor) / `.comment` / `.reasonCode` from the complaint/reason, updates the summary `Communication` with `recipient=[Practitioner]`, `about=[Appointment]`, `status=completed`. On hold failure: `$hold` **rejects** (Medplum bots never resolve to `{success: false}` — see §12); the bot catches that rejection and inspects the OperationOutcome's fixed `'Requested time slot is not available'` text specifically before returning `{ok: false, reason: 'slot_taken'}` — any other rejection re-throws as a genuine bot failure rather than being mislabeled as a booking race. |
-| `agent-patient-chat` | `$execute`, once per chat message | Re-reads that patient's Patient/Condition/MedicationRequest/AllergyIntolerance/Encounter **live, every call**, via the same shared `loadPatientClinicalContext` read `agent-intake` uses — never a cached blob, never a differently-tuned query. One Gemini call, single-turn, no tools. Persists each question and answer as threaded `Communication` resources (audit trail — see Data Model doc). |
-| `agent-expire-holds` | cron (hourly) | **Confirmed necessary**: `hold.ts` has no expiry/TTL logic anywhere, so a held slot stays `busy-tentative` forever unless something explicitly releases it. Finds stale `busy-tentative` Slots older than ~15 min and cancels the owning Appointment using the same delete-the-Slot logic as the fixed `cancel-appointment.ts` (§4). `Bot.cronString`/`cronTiming` are real, implemented, tested fields — a genuine supported trigger, not a workaround; `cronString` must be exactly 5 numeric fields (no seconds, no month/day aliases — confirmed via Medplum's pinned `cron-validator` version) or the job silently fails to schedule with no error surfaced. |
-| `cancel-appointment` *(core, modified)* / `reschedule-appointment` *(core, new)* | direct UI action (not `$execute` from the agent flow) | See §4's fork-strategy fix and the LLD — both now delete the Slot they release, keeping `$find`'s live view accurate. |
+| *(shared lib, not a bot)* `ensurePractitionerAndSchedule` | called only by `agent-ensure-doctor` | Searches by NPI and reuses existing resources; otherwise creates the `Practitioner`, matching `PractitionerRole`, and `Schedule`. The Schedule uses an NPI-seeded deterministic weekly template and carries two service-specific `SchedulingParameters` extensions. The search-before-create approach is idempotent in ordinary use; a concurrent first request for the same previously unseen NPI can still race and is an accepted POC limitation. No independent trigger — it does not get a separate Bot artifact. |
+| `agent-book-appointment` | `$execute` | Accepts only `{patientId, practitionerId, scheduleId, start, end, summaryCommunicationId}`. Re-reads and validates the Patient, Practitioner, Schedule, PractitionerRole, and intake Communication; derives specialty, reason, complaint, urgency, and service from those server-side resources; re-runs `$find`; and chooses the exact fresh proposal whose contained Slot matches the requested time. It adds the Patient participant and clinical display metadata before sending that exact proposal to `$book`. On success it read-and-spread links the summary Communication. A booking conflict becomes `{ok: false, reason: 'slot_taken'}`; unrelated pre-book failures re-throw, while a post-book Communication-link failure is logged so a committed booking is not reported as failed. |
+| `agent-patient-chat` | `$execute`, once per chat message | Accepts the doctor's NPI, resolves the real Practitioner, and verifies a booking relationship to the Patient before answering. Re-reads the Patient/Condition/MedicationRequest/AllergyIntolerance/Encounter **live, every call**, via the same shared `loadPatientClinicalContext` used by `agent-intake`. One Gemini call, single-turn, no tools. Persists the verified Practitioner-authored question and Device-authored answer as threaded `Communication` resources. |
+| Native `$cancel` / `reschedule-appointment` *(core, new)* | direct provider UI action (not exposed in the patient agent flow) | Cancellation calls Medplum's atomic instance-level `$cancel` directly. Rescheduling books the replacement through `$book`, preserves metadata and the summary link, then cancels the original through native `$cancel`. There is no custom cancellation or hold-expiry Bot. |
 
 ## 7. Scheduling mechanics
 
-`ensurePractitionerAndSchedule` builds a `Schedule` with the
-`SchedulingParameters` extension (confirmed exact URL:
+`ensurePractitionerAndSchedule` builds a `Schedule` with exactly two
+`SchedulingParameters` extensions, one for Office Visit and one for Urgent
+Visit (confirmed exact URL:
 `https://medplum.com/fhir/StructureDefinition/SchedulingParameters`).
+Each extension has a `service` reference to its HealthcareService plus its
+own `duration`, matching `alignmentInterval`, `timezone`, and `availability`.
+The service reference is required: a Schedule-level group without one does
+not match either requested service. Explicit alignment intervals avoid the
+otherwise-default hourly grid and produce 30-minute routine starts and
+15-minute urgent starts.
 **Gotcha worth building correctly the first time**: `availableTime`'s
 `daysOfWeek` sub-extension repeats once per day — a doctor working
 Mon/Wed/Fri needs three separate `{url: 'daysOfWeek', valueCode: ...}`
@@ -180,9 +161,9 @@ rather than an obvious error.
 `$find` additionally requires (confirmed directly in `find.ts`'s operation
 definition): exactly one `service-type-reference` (which must be present in
 the target `Schedule.serviceType` array — a Schedule here always lists
-both Office Visit and Urgent Visit, so either can be requested depending
-on `urgency`), one-or-more `schedule` references, a `start`/`end` range
-capped at 31 days, and — per `getSchedulingParametersGroup` — every
+both Office Visit and Urgent Visit), one-or-more `schedule` references, a
+`start`/`end` range capped at 31 days, and — per
+`getSchedulingParametersGroup` — every
 `Schedule` must have exactly one `actor` and a resolvable timezone (from
 the actor's extension or the Schedule/HealthcareService's own
 `SchedulingParameters`) or the operation throws `No timezone specified`.
@@ -192,9 +173,15 @@ gating); an absent `Schedule.planningHorizon` is not an error and doesn't
 default to anything — it's silently unbounded, capped only by the
 request's own 31-day window.
 
-Schedules start fully open — no fake pre-booked history, consistent with
-the original design's decision (see Data Model doc for the full
-resource-by-resource shape).
+The browser calls `$find` only to display proposed times. At booking it sends
+only ids and the selected start/end. The booking Bot repeats `$find` against
+the authoritative service and Schedule, selects the exact fresh proposal,
+and sends that proposal in a `Parameters` request to `$book`. Both operations
+return bare `Bundle` resources. Every operation URL is built with
+`medplum.fhirUrl(...)`.
+
+Schedules start fully open — no fake pre-booked history, consistent with the
+original design's decision (see Data Model doc for the full resource shape).
 
 ## 8. Distance ranking
 
@@ -240,11 +227,13 @@ flow).
   "General Practice." The histogram this produces is also the tuning tool
   for near-universal Synthea conditions (hyperlipidemia/prediabetes/
   obesity) that could otherwise skew the distribution.
-- **Duplicate-Practitioner fix**: Synthea repeats the same Practitioner
-  (same stable id, same fake NPI) across many bundles as a bare `POST`, so
-  importing as-is creates a fresh copy per occurrence, breaking "NPI is
-  the unique doctor key." Fixed via conditional-create (`ifNoneExist`)
-  keyed on Synthea's own stable id. The tool asserts NPI uniqueness across
+- **Identity and duplicate-Practitioner fix**: Synthea repeats the same
+  Practitioner (same stable id, same fake NPI) across many bundles. Medplum
+  replaces caller-supplied ids on `POST`, so every retained seed resource is
+  normalized to a deterministic FHIR id and written with unconditional
+  `PUT ResourceType/{id}`. References are rewritten to those ids before
+  upload. Retries are idempotent and a repeated Practitioner upserts instead
+  of multiplying. The tool asserts NPI uniqueness across
   practitioners and fails loudly (reporting exactly which NPIs collided)
   if that assumption is ever violated — not yet verified at full-corpus
   scale. If it fails: a handful of collisions gets a disambiguating suffix
@@ -257,10 +246,14 @@ flow).
   MedicationRequest, AllergyIntolerance) — cuts out Observation/Claim/
   ExplanationOfBenefit/Procedure/DiagnosticReport/ImagingStudy, roughly
   90% of the 1.1GB/432K-resource corpus.
-- **Bootstrap pass**: conditional-create the `HealthcareService`,
-  `Device`, and the small `ai-previsit-summary`/`ai-chat` CodeSystem/
-  ValueSet, in one transaction bundle (uploadable via the fork's existing
-  `UploadDataPage`).
+- **Bootstrap pass**: deterministic unconditional PUTs create/update the
+  fixed-id HealthcareServices, `Device/ai-appointment-agent`, and the small
+  `ai-previsit-summary`/`ai-chat` CodeSystem/ValueSet set. Their fixed
+  references are therefore resolvable exactly.
+- **Upload safety**: transformed patient bundles are split into a small
+  identity transaction plus clinical batch chunks below the server's 1 MB
+  request limit. Each batch entry status is checked; retryable failures are
+  retried without hiding per-entry FHIR failures.
 - CLI flags: `--limit N` (small default for dev iteration), `--slim`/
   `--full`, `--dry-run` (prints the specialty histogram without writing
   anything). Stream-parses files — never holds 1.1GB in memory.
@@ -315,34 +308,35 @@ authentication is implemented.
 - No exact specialty match on the previous-physician path → falls through
   to NPPES search transparently (§6); zero NPPES results → UI shows "no
   doctors found," not an error.
-- Slot taken between listing and booking → `$hold` rejects with a fixed
-  `'Requested time slot is not available'` OperationOutcome message (no
-  distinct status code exists for this vs. other validation failures —
-  confirmed directly in `hold.ts`); `agent-book-appointment` matches on
-  that exact text before returning `{ok: false, reason: 'slot_taken'}` —
-  any other rejection reason re-throws, so a real bug is never mislabeled
-  as a booking race. UI re-fetches slots on `slot_taken`.
+- Slot taken between display and booking → the Bot's fresh `$find` either
+  lacks an exact proposal or `$book` rejects during its serializable
+  availability check. The Bot returns `{ok: false, reason: 'slot_taken'}`
+  only for those expected conflict cases; unrelated failures re-throw. The
+  UI re-fetches slots on `slot_taken`.
 - LLM fails to confidently extract a specialty → ask the user to clarify
   rather than guessing (unchanged from the original design's philosophy).
 
 ## 13. Testing
 
-Following the fork's existing pattern (`vitest`, bot logic factored into
-testable pure functions/libs): unit tests for the Haversine function, the
-tiered specialty resolver (table-driven, using the real 41-disease list),
-and the ranking comparator — all pure and independently testable without a
-live Medplum connection. Beyond that, a manual end-to-end walkthrough for
-both flows (see Specs doc's acceptance criteria) rather than a full
-automated integration suite — consistent with this being a POC, not a
-maintained product.
+Following the fork's existing `vitest` pattern, pure helper tests cover
+distance, specialty resolution, ranking, seed transformation/chunking, and
+prompt/output guards. Handler tests cover authoritative booking re-reads,
+summary validation, fresh `$find` selection, `$book` parsing, native cancel,
+relationship checks, and failure classification. Before seeding and release,
+live target preflights verify deterministic PUT identity, the exact
+`$find`/`$book`/`$cancel` contracts, and the service-specific scheduling grid.
+The final acceptance pass walks both user flows end to end.
 
 ## 14. Deployment
 
-Vite dev server (or a static build) for the frontend; bots deployed via
-the fork's existing `deploy-bots.ts` script to the target Medplum project;
-Medplum itself runs as an external dependency (managed cloud project or
-self-hosted), same as NPPES and Gemini. No Docker Compose, no separate
-database to stand up.
+Vite dev server (or a static build) for the frontend. All `@medplum/*`
+packages are pinned together at exactly `5.1.27`. The corrected deployment
+path registers seven Bots (`block-availability`, `reschedule-appointment`,
+and the five `agent-*` Bots), resolves each Bot's placeholders against its
+own created-or-found Bot resource and Binary, uploads the compiled code, and
+calls `$deploy` for each one. Merely creating Bot resources is not a
+deployment. Medplum, NPPES, and Gemini remain external dependencies; there
+is no Docker Compose or separate application database.
 
 ## 15. What's dropped from the Python implementation
 
@@ -364,8 +358,9 @@ prompt (extended with the `summary` field).
 
 ## 16. Open items / Future work
 
-- Live-check `$find` against the actually-deployed Medplum server before
-  relying on it in production use (§3's one remaining caveat).
+- Run the documented target preflights before release: version/identity
+  before seeding, then live `$find`, `$book`, `$cancel`, per-service
+  `SchedulingParameters`, and all seven deployed Bot executions.
 - Optional demonstration `AccessPolicy` (scoped to one hand-created
   practitioner membership) as a "here's how real per-doctor enforcement
   would work" artifact — deliberately not the main `/desk` access model,
