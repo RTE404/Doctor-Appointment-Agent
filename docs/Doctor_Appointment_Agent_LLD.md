@@ -1,14 +1,10 @@
 # Doctor Appointment Agent — Low-Level Design
 
-> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
-> banner for the full list. Specifically here: `agent-book-appointment.ts`'s
-> and `agent-expire-holds.ts`'s function-level designs no longer match the
-> implementation (booking is a single `$book` call, the expire-holds bot
-> doesn't exist). The implementation plan
-> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
-> has the current, source-verified version of every bot's actual logic —
-> treat it as authoritative on function bodies, this doc as authoritative
-> on the overall module map.
+> **Synchronized with the approved implementation plan (2026-08-04).** All
+> `@medplum/*` packages are exactly `5.1.27`; scheduling calls use
+> `medplum.fhirUrl(...)` and the verified bare-Bundle response contracts;
+> seeded identity uses deterministic PUT; booking trusts only resources and
+> a fresh `$find` result read by the Bot.
 
 Supersedes the Python-era LLD. Function-by-function design for every bot
 and shared library module in `Doctor_Appointment_Agent_Backend.md`. Each
@@ -153,11 +149,13 @@ on which side of the boundary you're reading.
   4. `normalizeLlmSpecialty(result.specialty)` — if it returns
      `undefined`, return a clarification-needed response rather than
      guessing (FR-4's "never silently default" rule).
-  5. Create a `Communication` (`status: 'preparation'`, `category:
-     ai-previsit-summary`, `subject: Patient/{patientId}`, `sender:
-     Device/ai-appointment-agent`, `payload: [{contentString:
-     result.summary}]`, `meta.tag: [{code: 'ai-generated'}]`, **no
-     `recipient` yet** — the doctor isn't chosen).
+  5. Create the authoritative summary `Communication`: `status:
+     'preparation'`, `category: ai-previsit-summary`, `subject:
+     Patient/{patientId}`, `sender: Device/ai-appointment-agent`,
+     `payload.contentString = result.summary`, `topic` = the normalized NUCC
+     specialty, `reasonCode` = the concise reason, `note` = the original
+     complaint, `priority` = urgency, and `meta.tag: ai-generated`. It has no
+     recipient yet because the doctor is not chosen.
 - **Output**: `{intent: {specialtyCode, specialtyLabel, reason, urgency},
   summaryCommunicationId: string}`, or `{needsClarification: true}`.
 - **Errors**: Gemini/network failure propagates as a bot failure (no
@@ -206,17 +204,17 @@ on which side of the boundary you're reading.
   only ranks/returns candidates, it never provisions) and not the UI.
 - **Logic**:
   1. `medplum.searchOne('Practitioner', 'identifier=http://hl7.org/fhir/sid/us-npi|' + npi)`.
-     If found, reuse; else — fetch `candidate` via `getNppesDoctorByNpi`
-     if not already supplied, and conditional-create `Practitioner` +
-     `PractitionerRole` (specialty) in one transaction, `ifNoneExist`-keyed
-     on the NPI identifier.
+     If found, reuse; otherwise fetch `candidate` via
+     `getNppesDoctorByNpi` if it was not supplied and create the
+     `Practitioner`. Search for and reuse its matching `PractitionerRole`, or
+     create the missing NUCC-coded role.
   2. `medplum.searchOne('Schedule', 'actor=Practitioner/' + practitionerId)`.
      If found, reuse; else generate a `WeeklyTemplate` deterministically
      from a hash of the NPI (working days, start/end hour, lunch gap —
      same logic as the retired Python `template.py`, just producing a
      `SchedulingParameters` extension instead of Postgres rows), resolve
-     the doctor's timezone from a small state→IANA table, and
-     conditional-create the `Schedule` with `serviceType` holding **two**
+     the doctor's timezone from a small state→IANA table, and create the
+     `Schedule` with `serviceType` holding **two**
      entries, one per HealthcareService (Office Visit, Urgent Visit) —
      confirmed both the array cardinality (`0..*`) and the exact matching
      mechanic directly in Medplum's `servicetype.ts`: each entry is a
@@ -226,7 +224,11 @@ on which side of the boundary you're reading.
      `isCodeableReferenceLikeTo` matches with `.some(...)` across the
      array — "is the requested service present," not "is it the only
      one" — so either service can be requested via `$find`'s
-     `service-type-reference` depending on the patient's `urgency`.
+     `service-type-reference` depending on the patient's `urgency`. Add
+     exactly two Schedule-level `SchedulingParameters` groups, one per
+     HealthcareService. Each group carries `service`, `duration`, a matching
+     `alignmentInterval`, `timezone`, and the deterministic availability
+     blocks; a group without `service` would not match either service.
 - **Output**: the practitioner/schedule ids plus **both** HealthcareService
   ids, keyed by which urgency they serve — the caller picks the right one.
 - **Idempotency**: the identifier/actor searches in steps 1–2 are what
@@ -262,53 +264,42 @@ on which side of the boundary you're reading.
 
 ### `handler(medplum, event)`
 - **Purpose**: FR-9/FR-10.
-- **Input**: `{patientId, npi, scheduleId, healthcareServiceId, start,
-  end, summaryCommunicationId}` — `healthcareServiceId` is whichever of
-  `agent-ensure-doctor`'s two returned ids matches the intake's `urgency`
-  (caller's responsibility to have picked the right one).
+- **Input**: `{patientId, practitionerId, scheduleId, start, end,
+  summaryCommunicationId}`. The browser sends no HealthcareService id,
+  specialty, urgency, proposed Appointment, or clinical display metadata.
 - **Logic**:
-  1. Build a proposed `Appointment` (`status: 'proposed'`, `start`/`end`,
-     `serviceType` with the `service-type-reference` extension pointing
-     at the selected `HealthcareService`, `participant`: Patient +
-     Practitioner). **No `contained` Slot** — `$hold` creates and owns a
-     real, top-level `Slot` resource itself (confirmed: Medplum's
-     `hold.ts` references the conflicting/created Slot as its own
-     resource, e.g. `Schedule/{id}`-scoped `blockingSlots`, never as
-     something embedded in the Appointment); once held, standard FHIR
-     `Appointment.slot[]` references it. This is also why
-     `agent-expire-holds` can search `Slot?status=busy-tentative`
-     directly — it would find nothing if the Slot were `contained`.
-  2. `try { await medplum.post('Appointment/$hold', proposedAppointment) }
-     catch`. **`$hold` failure is a rejected Promise, not a resolved
-     `{success: false}`** (confirmed: `medplum.executeBot()`/`$hold` both
-     surface failure by rejecting with `OperationOutcomeError`, never by
-     resolving to a failure value). In the `catch` block: inspect
-     `err.outcome.issue[0].details.text`. If it is exactly `'Requested
-     time slot is not available'` (Medplum's fixed string for every
-     availability/conflict rejection — confirmed in `hold.ts`), return
-     `{ok: false, reason: 'slot_taken'}`. **Any other rejection reason
-     (bad service reference, wrong duration, outside availability window,
-     etc.) is a genuine bug and must re-throw**, not be mislabeled as
-     `slot_taken` — conflating them would hide real errors as if they were
-     normal booking races.
-  3. `POST Appointment/{id}/$confirm`.
-  4. `PATCH` the confirmed Appointment: `description` = the LLM's short
-     reason string (this is the "stated issue" shown on the doctor's
-     queue card — see Data Model doc), `comment` = the patient's verbatim
-     complaint text (longer, raw, not shown on the queue card),
-     `reasonCode[0].text` = same value as `description` (structured-field
-     copy, for any FHIR-standard tooling that reads `reasonCode` instead
-     of `description`), `priority` = mapped from urgency.
-  5. `PATCH` the summary `Communication` (`summaryCommunicationId`):
+  1. Read `Patient/{patientId}`, `Practitioner/{practitionerId}`,
+     `Schedule/{scheduleId}`, the Practitioner's NUCC-coded
+     `PractitionerRole`, and `Communication/{summaryCommunicationId}`.
+  2. Validate that the Schedule actor is that Practitioner; the summary's
+     subject is that Patient; and the summary has the expected category,
+     Device sender, `ai-generated` tag, and `preparation` status.
+  3. Derive specialty, urgency, reason, complaint, and the routine/urgent
+     HealthcareService entirely from the authoritative role and
+     Communication. Reject mismatches instead of accepting browser claims.
+  4. Call type-level `$find` with the authoritative service, Schedule, and a
+     narrow range covering `start`/`end`. Parse its **bare Bundle** and find
+     an exact proposed Appointment whose `contained` Slot has the requested
+     Schedule, start, and end. If none exists, return `slot_taken`.
+  5. Take that exact fresh proposal, add the Patient participant, and add
+     `description`, `comment`, `reasonCode`, and `priority` derived from the
+     Communication. Do not hand-reconstruct its service or contained Slot.
+  6. Send a `Parameters` request whose `appointment` parameter contains that
+     proposal to `medplum.fhirUrl('Appointment', '$book')`. Parse the bare
+     Bundle response for the booked Appointment and persisted top-level
+     Slot. `$book` performs the availability check inside a serializable
+     transaction.
+  7. Read-and-spread update the summary `Communication`:
      `recipient = [Practitioner/{id}]`, `about = [Appointment/{id}]`,
-     `status = 'completed'`, `sent = now`.
-- **Output**: `{ok: true, appointment: ConfirmedAppointment}` or
+     `status = 'completed'`, `sent = now`. If this post-book linkage fails,
+     log it and still return the booked Appointment; the Bot must not tell
+     the patient that a booking failed after it actually committed.
+- **Output**: `{ok: true, appointment: BookedAppointment}` or
   `{ok: false, reason: 'slot_taken'}`.
-- **Errors**: any failure *after* a successful `$hold` (e.g. `$confirm`
-  fails) is a genuine failure, not a `slot_taken` conflict — the hold
-  already proved the slot was available a moment earlier — and propagates
-  as a bot failure (thrown), matching the general bot-error contract in
-  Design doc §12, rather than being silently swallowed.
+- **Errors**: absence of an exact fresh proposal and the verified Medplum
+  availability-conflict OperationOutcome map to `slot_taken`. Invalid
+  resource relationships, malformed summary state, and every unrelated
+  operation failure are genuine thrown Bot failures.
 
 ---
 
@@ -316,28 +307,31 @@ on which side of the boundary you're reading.
 
 ### `handler(medplum, event)`
 - **Purpose**: FR-13/FR-14/FR-15 — the doctor-facing grounded Q&A agent.
-- **Input**: `{patientId: string, question: string, threadId?: string}`.
+- **Input**: `{npi: string, patientId: string, question: string,
+  threadId?: string}`.
 - **Logic**:
-  1. **Live, every call** (never cached): `loadPatientClinicalContext(medplum,
+  1. Resolve the Practitioner by NPI and verify a real Appointment relates
+     that Practitioner to `Patient/{patientId}`. Reject mismatched pairs.
+  2. **Live, every call** (never cached): `loadPatientClinicalContext(medplum,
      patientId)` — the same shared read used by `agent-intake.ts`
      (`lib/patientContext.ts` above), so both bots ground themselves
      against identical data depth.
-  2. Serialize into a compact, deterministic JSON context block.
-  3. One Gemini call, single-turn (no multi-turn context retained by the
-     model itself — see step 6 for how threading is achieved instead),
+  3. Serialize into a compact, deterministic JSON context block.
+  4. One Gemini call, single-turn (no multi-turn context retained by the
+     model itself — see step 7 for how threading is achieved instead),
      `temperature: 0`, with the system prompt from `lib/prompts.ts`
      (Design doc §10: relay-only, fixed refusal for interpretation/advice
      requests, explicit "not recorded" for absent data).
-  4. Output guard: scan the response for a small fixed list of
+  5. Output guard: scan the response for a small fixed list of
      interpretation-flavored phrases ("you should," "I recommend,"
      "likely has," etc.); if matched, substitute the fixed refusal string
      instead of returning the model's text (defense in depth, not a
      guarantee — Design doc §10).
-  5. Persist the question as a `Communication` (`category: ai-chat`,
-     `sender: Practitioner` — the asking doctor — or a generic "desk"
-     actor if no real doctor identity is tracked, `subject: Patient`,
+  6. Persist the question as a `Communication` (`category: ai-chat`,
+     `sender: Practitioner/{resolvedId}` for the verified asking doctor,
+     `subject: Patient`,
      `partOf: [Communication/{threadId}]` if continuing a thread).
-  6. Persist the answer as a second `Communication` (`sender:
+  7. Persist the answer as a second `Communication` (`sender:
      Device/ai-appointment-agent`, same `partOf` thread) — **this
      persisted thread, not model memory, is what "threading" means here**;
      each individual Gemini call is still single-turn and stateless.
@@ -349,42 +343,19 @@ on which side of the boundary you're reading.
 
 ---
 
-## `src/bots/agent/agent-expire-holds.ts`
+## Removed: `src/bots/agent/agent-expire-holds.ts`
 
-### `handler(medplum, event)`
-- **Purpose**: cleans up stale holds — confirmed necessary since `$hold`
-  has no built-in expiry (Design doc §6).
-- **Trigger**: `Bot.cronString` (hourly), not `$execute` — confirmed real,
-  implemented, tested (`packages/server/src/workers/cron.ts`).
-- **Logic**: `Slot?status=busy-tentative&_lastUpdated=lt{now - 15min}` →
-  for each, resolve the owning `Appointment` (via
-  `Appointment?slot=Slot/{id}`) and cancel it the same way
-  `src/bots/core/cancel-appointment.ts` does (status update + delete the
-  held Slot — see that bot's fix below), so a cron-expired hold and a
-  user-initiated cancel leave Medplum in the exact same state.
-- **Output**: count of expired holds cleaned up (for logging only; no
-  caller depends on the return value since this runs on a cron, not a
-  user-facing flow).
+This Bot does not exist. Booking uses one immediate `$book` operation, so no
+intermediate hold state exists and no cron cleanup is required.
 
 ---
 
-## `src/bots/core/cancel-appointment.ts` *(modified — fixes an orphaned-Slot bug)*
+## Removed: `src/bots/core/cancel-appointment.ts`
 
-### `handler(medplum, event)`
-- **Purpose**: unchanged from the fork's original bot (cancel an
-  Appointment) — audited and found to leave its held `Slot` behind as a
-  permanent phantom `busy`/`busy-tentative` block, since `Slot` only ever
-  exists while busy/held (Data Model doc) and nothing was deleting it on
-  cancel.
-- **Fix**: after setting `Appointment.status = 'cancelled'`, read
-  `Appointment.slot[]` and `medplum.deleteResource('Slot', slotId)` for
-  each referenced Slot — not a status flip to `'free'`, an actual delete,
-  matching Slot's "only exists while non-free" convention, so `$find`
-  correctly shows that time as available again with no lingering
-  resource.
-- **Used by**: the existing `AppointmentDetailPage` cancel action (fork's
-  own UI, untouched) and `agent-expire-holds` (§ above, same cleanup
-  path).
+The provider cancellation action posts directly to
+`medplum.fhirUrl('Appointment', appointmentId, '$cancel')`. Medplum performs
+the status update and deletes referenced Slots atomically in a serializable
+transaction, so a custom Bot would duplicate safer native behavior.
 
 ---
 
@@ -400,21 +371,21 @@ on which side of the boundary you're reading.
      `serviceType`/`participant` references).
   2. Build a new proposed `Appointment` at `newStart`/`newEnd` on the same
      `Schedule`/`serviceType`/`participant`s.
-  3. `try { $hold }` on the new proposed Appointment — same string-match
-     failure handling as `agent-book-appointment` (§ above): on the fixed
-     `'Requested time slot is not available'` rejection, return `{ok:
-     false, reason: 'slot_taken'}` without touching the original
-     Appointment; any other rejection re-throws.
-  4. On successful hold: `$confirm` the new Appointment, then run the same
-     cancel-and-delete-Slot logic as `cancel-appointment.ts` on the
-     *original* Appointment.
-- **Output**: `{ok: true, appointment: ConfirmedAppointment}` or `{ok:
-  false, reason: 'slot_taken'}` — the original booking is left completely
-  untouched whenever the new time can't be held, so a failed reschedule
-  never loses the patient's existing slot.
-- **Errors**: same rule as `agent-book-appointment` — any failure after a
-  successful hold on the new slot is a genuine bug, propagates as a bot
-  failure.
+     Include a contained proposed Slot because this retained questionnaire
+     chooses a date/time directly instead of consuming a `$find` proposal.
+  3. Send that proposal in a `Parameters` request to type-level `$book` via
+     `medplum.fhirUrl(...)`, parse the bare Bundle, and return `slot_taken`
+     only for the verified availability-conflict outcome. Until this
+     succeeds, the original Appointment remains untouched.
+  4. Preserve the original Appointment's clinical display metadata on the
+     replacement and re-link its summary Communication to the replacement.
+  5. Cancel the original through native instance-level `$cancel`.
+- **Output**: `{ok: true, appointment: BookedAppointment}` or `{ok: false,
+  reason: 'slot_taken'}`.
+- **Known POC edge**: `$book`, Communication re-linking, and `$cancel` are
+  separate operations. A failure after replacement booking can require
+  reconciliation and may briefly or permanently leave both appointments.
+  The Bot must surface that failure rather than label it `slot_taken`.
 
 ---
 
@@ -479,11 +450,12 @@ on which side of the boundary you're reading.
 
 ## `tools/seed/pass2-transform.ts`
 
-### `transformBundle(bundle: Bundle, specialtiesByStableId: Map): Bundle`
-- Per-bundle rewrite: (1) filters entries down to the 7 resource types the
-  app reads; (2) rewrites `Practitioner`/`Organization` entries from bare
-  `POST` to conditional `ifNoneExist` upserts keyed on Synthea's stable id
-  (the duplicate-Practitioner fix); (3) injects the resolved specialty as
+### `transformBundle(bundle: Bundle, specialtiesByStableId: Map, mode: 'slim' | 'full'): Bundle`
+- Per-bundle rewrite: (1) filters entries to the slim set or retains the
+  full-mode resource set; (2) assigns every retained resource a
+  deterministic FHIR id, rewrites every reference to that id, and emits an
+  unconditional `PUT ResourceType/{id}` request (never POST); (3) injects
+  the resolved specialty as
   both `PractitionerRole.specialty` (new resource, NUCC-coded) and
   `Practitioner.qualification[0].code.text` (display copy); (4) adds the
   mandatory timezone extension to each `Practitioner` so they're
@@ -491,8 +463,17 @@ on which side of the boundary you're reading.
 
 ## `tools/seed/upload.ts`
 
-### `uploadBundle(medplum, bundle): Promise<void>`
-- `medplum.executeBatch(bundle)` (bundles are already `type: 'transaction'`
-  with `urn:uuid` fullUrls, so cross-resource references resolve
-  server-side). Retries transient failures; does not retry validation
-  errors (those need a code fix, not a retry).
+### `uploadBundle(medplum, bundle): Promise<Bundle>`
+- Executes the transaction/batch and returns the response Bundle. Retries
+  transient failures, rejects validation failures, and inspects every batch
+  entry status so a partially failed HTTP-200 batch is never reported as a
+  successful upload.
+
+## `tools/seed/chunk-bundle.ts`
+
+### `splitForUpload(bundle): {identityBundle, clinicalChunks}` / `uploadPatientBundle(...)`
+- All references are already deterministic before chunking. Identity
+  resources upload first in a transaction; clinical resources upload in
+  size-bounded batch chunks below Medplum's default 1 MB request limit.
+  Bootstrap resources use the same unconditional PUT rule, including the
+  fixed `Device/ai-appointment-agent` id.

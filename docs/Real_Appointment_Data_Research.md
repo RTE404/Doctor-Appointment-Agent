@@ -1,5 +1,10 @@
 # Real Doctor Appointment Data — Research Report
 
+> **Implementation note (synchronized 2026-08-05):** The conclusion remains
+> unchanged: appointments are intentionally synthetic. The implementation
+> now uses Medplum's verified `Appointment/$find`, `Appointment/$book`, and
+> instance-level `Appointment/{id}/$cancel` contracts.
+
 ## Big Question
 
 Is there an API, dataset, or endpoint through which we can pull **real** doctor
@@ -123,7 +128,7 @@ populated into it would still be fictional demo entries, but the booking
 mechanics would be handled by production scheduling infrastructure rather
 than hand-rolled code. **Update, post-Medplum-native rebuild**: this
 recommendation is now moot — Medplum's own native scheduling operations
-(`$find`/`$hold`/`$confirm`) already provide exactly this property (real,
+(`$find`/`$book`/`$cancel`) already provide exactly this property (real,
 atomic, conflict-checked booking mechanics) for the app's synthetic doctors,
 so there's no longer a gap for SuperSaaS to fill. It does not solve "pull
 real doctors' real appointments" either way — that remains unsolved by

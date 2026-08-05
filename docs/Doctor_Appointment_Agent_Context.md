@@ -1,13 +1,8 @@
 # Doctor Appointment Agent POC — Context & Design Decisions
 
-> ⚠️ **Superseded on one point** — see `Doctor_Appointment_Agent_Design.md`'s
-> banner for the full list of what changed in the 2026-08-05 correction
-> pass. Specifically here: this doc's non-goals list "cancellations" as
-> excluded, but the implementation plan includes a native-`$cancel`-backed
-> cancel action and a `$book`-backed reschedule action for the fork's
-> pre-existing provider-side pages (not part of the new patient/doctor
-> agent flow) — a scope decision made during implementation, not yet
-> reconciled back into this doc's non-goals list.
+> **Synchronized 2026-08-05:** This document matches the authoritative
+> implementation plan at
+> `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`.
 
 ## Goal
 
@@ -50,6 +45,8 @@ Included:
 - Previous physician lookup
 - New doctor discovery
 - Appointment booking
+- Provider-side appointment cancellation and rescheduling through
+  Medplum's native scheduling operations
 - Doctor lookup by NPI
 - Per-doctor patient queue (everyone who's ever booked with them)
 - AI-generated pre-visit patient summary
@@ -57,7 +54,7 @@ Included:
 
 Excluded: Diagnosis, adaptive questionnaires, clinical decision support,
 medication recommendations, clinical judgment or advice of any kind from
-either AI surface, cancellations, waitlists, reminders, recurring
+either AI surface, patient-agent cancellation/rescheduling flows, waitlists, reminders, recurring
 appointments, real authentication/login for doctors (NPI entry is a
 display filter, not an access-control mechanism — see Design doc §"Doctor
 identifier & access model").
@@ -80,7 +77,10 @@ Patient/clinical data is seeded from a Synthea-generated FHIR bundle
 dataset (983 patient bundles, `fhir/` at the project root) via a one-time
 TypeScript seeding tool — the app never generates patient data itself, only
 reads it. Encounters reference practitioners and organizations, which is
-how previous-physician history is reconstructed.
+how previous-physician history is reconstructed. Every seeded resource is
+written at a deterministic id with `PUT ResourceType/{id}`; Medplum POST
+creation is not used because it replaces caller-supplied ids and would
+break cross-resource references.
 
 ## NPPES
 
@@ -94,11 +94,14 @@ looked up.
 ## Scheduling
 
 Owned entirely by Medplum's native scheduling operations (`Schedule`,
-`Slot`, `Appointment`, and the `$find`/`$hold`/`$confirm` operations) —
+`Slot`, `Appointment`, and the `$find`/`$book`/`$cancel` operations) —
 there is no separate application-owned scheduling service or database.
 Schedules are linked to doctors via NPI (stored as a `Practitioner`
-identifier). See `Doctor_Appointment_Agent_Design.md` for the lazy
-provisioning and NPI-seeded availability mechanism.
+identifier). The browser uses `$find` only to display candidate times; the
+booking Bot repeats `$find` server-side and books that fresh proposal, so a
+browser-supplied Appointment is never trusted. See
+`Doctor_Appointment_Agent_Design.md` for the lazy provisioning and
+NPI-seeded availability mechanism.
 
 ------------------------------------------------------------------------
 

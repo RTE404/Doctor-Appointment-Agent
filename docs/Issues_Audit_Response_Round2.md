@@ -1,5 +1,12 @@
 # Response to `issues.md` (2026-08-04 Re-Scan) — Verification Report
 
+> **Archived audit record; final resolutions synchronized 2026-08-05.** The
+> findings describe earlier plan revisions. The current implementation
+> contract is the 2026-08-04 plan: deterministic unconditional PUT for all
+> seed/bootstrap resources, bare-Bundle `$find`/`$book` responses, metadata
+> on the proposal before `$book`, native `$cancel`, exact Medplum `5.1.27`,
+> and live target preflights. Corrected final resolutions appear below.
+
 This is the second round of the same process as `docs/Issues_Audit_Response.md`:
 `issues.md` was updated with a re-scan of the corrected plan, claiming 4 of
 the original 14 findings fully fixed, 7 partially fixed, 3 unresolved, plus
@@ -26,16 +33,16 @@ shortcut. All 12 are now fixed in
 |---|---|---|---|
 | 1 | `$find`/`$book` response is `Parameters`-wrapped, not a bare `Bundle` | **Confirmed** — and my prior fix had this backwards | `buildOutputParameters` bypasses the `Parameters` envelope entirely when an operation has exactly one `return` output parameter (both `find` and `book` do) — confirmed at `parameters.ts:210-219`. Official example client code and `appointment-book.md` agree; `appointment-find.md` is the one stale Medplum doc. Fixed in Task 21, 25, 31. |
 | 2 | Booked Appointment has no Patient participant | **Confirmed** | `find.ts` builds `participant` purely from `Schedule.actor` — no patient ever enters it. `agent-book-appointment.ts` now injects `{actor: {reference: 'Patient/'+patientId}, status:'accepted'}` before calling `$book`. |
-| 3 | Booking can commit, then report failure | **Confirmed as a real design gap** | Post-`$book` metadata writes (stated-issue fields, Communication link) are now wrapped so a failure there is logged, never propagated — the booking already succeeded by that point. |
+| 3 | Booking can commit, then report failure | **Confirmed as a real design gap** | All Appointment metadata is derived from the authoritative intake Communication and placed on the proposal before `$book`. Only the Communication linkage remains afterward; a failure there is logged and cannot make the Bot report that the already-successful booking failed. |
 | 4 | Uploader drops every generated `PractitionerRole` | **Confirmed against my own `IDENTITY_TYPES` set** | `PractitionerRole` was in neither `IDENTITY_TYPES` nor `CLINICAL_TYPES` in `chunk-bundle.ts` — silently filtered out of both. Added to `IDENTITY_TYPES`. |
-| 5 | Chunking leaves clinical-to-clinical references dangling (26,268 corpus-wide) | **Confirmed, and the fix simplifies the design** | Confirmed a load-bearing fact first: a client-supplied `id` is preserved for *any* create processed as a bundle entry (`batch` or `transaction` — same code path, `{batch:true}` passed either way, `fhir-router/src/batch.ts:692`). This means every reference is resolvable client-side, up front, using each resource's already-known stable id — no need to wait for a live response. Redesigned `transformBundle` to resolve every reference (`subject`, `patient`, `serviceProvider`, `participant.individual`, `encounter`, `requester`, `reasonReference[]`) before chunking; deleted the response-based rewrite step entirely. |
+| 5 | Chunking leaves clinical-to-clinical references dangling (26,268 corpus-wide) | **Confirmed; final identity assumption corrected again** | Medplum replaces caller ids on POST, so the final plan assigns deterministic ids, rewrites every retained reference up front, and emits unconditional `PUT ResourceType/{id}` entries. Chunks therefore never depend on POST preserving a source id or on response-driven rewrites. |
 | 6 | Batch failures silently counted as success | **Confirmed** | `uploadBundle` now inspects `response.entry[].response.status` for `batch`-type bundles and throws on any non-2xx entry. |
 | 7 | `--full`/`--slim`/manifest semantics don't mean what the plan said | **Confirmed** | Task 36's `--slim --full` was genuinely self-contradictory (last flag wins → selects full mode, the opposite of the stated intent). Fixed to run explicit `--slim` for the real corpus. Also fixed: `splitForUpload` now has a third "other" bucket so `--full` mode's extra resource types aren't silently dropped a second time; Task 10's smoke test now explicitly targets a disposable project to avoid specialty-poisoning a partial run into the real target. |
-| 8 | Bootstrap `HealthcareService`s aren't idempotent | **Confirmed** | Neither `HealthcareService` carried the identifier its own `ifNoneExist` queried for. Added it to both. (Checked separately: the `Device`'s hard-coded id *is* preserved, since that bundle is `type: transaction` — this sub-claim didn't apply.) |
+| 8 | Bootstrap `HealthcareService`s aren't idempotent | **Confirmed; final identity assumption corrected again** | Every fixed bootstrap resource, including both HealthcareServices and `Device/ai-appointment-agent`, is written by deterministic unconditional PUT. No conditional-create identifier or POST id preservation is relied upon. |
 | 9 | Seed CLI doesn't start on Windows | **Confirmed** | `import.meta.url` (`file:///D:/...`, encoded, forward slashes) never equals `` `file://${process.argv[1]}` `` (`D:\...`, raw backslashes) — confirmed as a real mismatch. Replaced with `pathToFileURL(process.argv[1]).href`. Also fixed: credential casting → validation; `tsconfig.json` extended to typecheck `tools/`. |
 | 10 | Bot deployment sends the same code to every bot | **Confirmed against my own script** | The fix from the prior pass matched Binary code with a predicate that didn't reference the bot being deployed — always found the same first match. Rewritten to match each bot's own `executableCode.url` to its Binary by `fullUrl`, exactly like `UploadDataPage.tsx`'s real (and correct) logic. Also fixed: missing-bot creation now uses the admin `admin/projects/{id}/bot` endpoint (creates the `ProjectMembership` a bot needs to actually run), not a bare `createResource` call. |
 | 11 | NPPES discovery broken for this corpus | **Confirmed** | All 983 patients store `address.state` as `"Massachusetts"`, never `"MA"`; NPPES requires the 2-letter code. Added a full-name→code normalizer inside `searchNppesDoctors`, plus a state-only fallback when an exact city+state search returns nothing. |
-| 12 | Repository has conflicting "authoritative" docs | **Confirmed** | The 7 previously-authoritative docs (Design/Specs/HLD/LLD/Data Model/Backend/Context) still described `$hold`/`$confirm`, `agent-expire-holds`, and a hand-rolled cancel bot. Added explicit superseding banners to all 7, naming exactly which points the implementation plan now overrides, pointing at this file's evidence trail. |
+| 12 | Repository has conflicting "authoritative" docs | **Confirmed** | All maintained architecture, requirements, data-model, backend, and plan documents are now synchronized to `$book`, no hold-expiry Bot, native `$cancel`, deterministic PUT identity, and the authoritative server-side booking boundary. Audit files are explicitly archival. |
 
 ## Bugs found while fixing the above (not in the re-scan)
 
@@ -78,12 +85,14 @@ decisions rather than bugs:
   restriction on the relationship query) are real but incremental
   hardening on top of an already-explicit "not real auth" design decision.
 - **P1-12** (fork pins Medplum `5.0.12`, verification was done against
-  `5.1.27`) is a genuine, unresolved deployment-verification gate — no
-  code fix closes this, only checking against the actual deployed server
-  version can, which the plan already flags as an outstanding manual step.
+  `5.1.27`) is resolved in the plan: every `@medplum/*` dependency is pinned
+  to exactly `5.1.27`, with a version/identity preflight before seeding and
+  live operation-contract preflights before release. A hosted target may
+  report a different patch only if it demonstrates the required behavior.
 - **P2s** (test coverage gaps, retry backoff/jitter, verification-command
   overclaiming, one EOF whitespace nit) are legitimate engineering-hygiene
   items, not correctness defects — not addressed this pass.
 
-These are open, not silently resolved — flagging that plainly rather than
-implying a broader cleanup happened than actually did.
+The POC trade-offs above remain accepted where stated; the version mismatch
+is no longer open because dependency pinning and target preflights are now
+explicit release gates.

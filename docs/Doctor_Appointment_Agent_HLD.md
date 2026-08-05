@@ -1,14 +1,9 @@
 # Doctor Appointment Agent — High-Level Design (HLD)
 
-> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
-> banner for the full list. Specifically here: the Flow 1 sequence diagram's
-> `$hold`/`$confirm` steps and the architecture diagram's `agent-expire-holds`
-> node are stale (booking is now a single `$book` call against `$find`'s own
-> output, with no hold-expiry bot at all); the External Interfaces table's
-> scheduling description should read "`$find`/`$book`/`$cancel`". The
-> implementation plan
-> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
-> is authoritative on these points.
+> **Synchronized with the approved implementation plan (2026-08-04).** This
+> document now uses the verified Medplum `5.1.27` scheduling contracts,
+> deterministic seed identity, authoritative server-side booking validation,
+> native cancellation, and the final seven-Bot roster.
 
 Sits above `Doctor_Appointment_Agent_Design.md` (module/bot responsibilities,
 fork strategy, scheduling mechanics, error handling, testing) — this
@@ -67,8 +62,6 @@ flowchart TB
         Ensure[agent-ensure-doctor]
         Book[agent-book-appointment]
         Chat[agent-patient-chat]
-        Expire[agent-expire-holds\ncron]
-        Cancel[cancel-appointment\nmodified]
         Reschedule[reschedule-appointment\nnew]
     end
     Lib[(ensurePractitionerAndSchedule\nshared lib, not a bot)]
@@ -83,7 +76,7 @@ flowchart TB
     AgentPages -->|direct FHIR search,\nno bot| Medplum
     DeskPages -->|direct FHIR search,\nno bot| Medplum
     DeskPages --> Chat
-    Existing --> Cancel
+    Existing -->|native Appointment/$cancel| Medplum
     Existing --> Reschedule
 
     Intake --> Gemini
@@ -95,8 +88,6 @@ flowchart TB
     Book --> Medplum
     Chat --> Gemini
     Chat --> Medplum
-    Expire --> Medplum
-    Cancel --> Medplum
     Reschedule --> Medplum
     Lib --> Medplum
 ```
@@ -130,7 +121,7 @@ sequenceDiagram
     UI->>Intake: $execute {patientId, complaintText}
     Intake->>M: Read patient's clinical resources
     Intake->>Gemini: One call → {specialty, reason, urgency, summary}
-    Intake->>M: Create Communication (status: preparation)
+    Intake->>M: Create authoritative Communication\n(topic, reasonCode, note, priority; status: preparation)
     Intake-->>UI: {intent, summaryCommunicationId}
 
     UI->>Find: $execute {patientId, specialtyCode}
@@ -145,21 +136,26 @@ sequenceDiagram
     U->>UI: Pick a doctor
     UI->>Ensure: $execute {npi, candidate?}
     Ensure->>NPPES: (only if not already supplied)
-    Ensure->>M: ensurePractitionerAndSchedule —\nconditional-create Practitioner+PractitionerRole+Schedule
+    Ensure->>M: Search/reuse or create Practitioner+\nPractitionerRole+Schedule with two service parameter groups
     Ensure-->>UI: {practitionerId, scheduleId, healthcareServiceIds}
     UI->>M: Direct $find (scheduleId, serviceId matching urgency)
-    M-->>UI: Available slots
+    M-->>UI: Bare Bundle of proposed Appointments (display only)
 
     U->>UI: Pick a slot, confirm
-    UI->>Book: $execute {patientId, npi, scheduleId, healthcareServiceId,\nstart, end, summaryCommunicationId}
-    Book->>M: $hold (proposed Appointment, no contained Slot)
+    UI->>Book: $execute {patientId, practitionerId, scheduleId,\nstart, end, summaryCommunicationId}
+    Book->>M: Re-read Patient, Practitioner, Schedule, Role, Communication
+    Book->>Book: Validate references; derive service + clinical metadata
+    Book->>M: Fresh $find for authoritative service/schedule/time
+    M-->>Book: Bare Bundle; exact proposal contains Slot
     alt slot still available
-        Book->>M: $confirm
-        Book->>M: Update Appointment fields (description = stated issue) +\nCommunication (recipient, status: completed)
+        Book->>Book: Add Patient + derived metadata to exact proposal
+        Book->>M: $book (Parameters request)
+        M-->>Book: Bare Bundle with booked Appointment + persisted Slot
+        Book->>M: Complete Communication (recipient, about, sent)
         Book-->>UI: {ok: true, appointment}
         UI-->>U: Confirmation page — NPI shown large, copyable
     else slot taken concurrently
-        M--xBook: $hold rejects — OperationOutcome,\n'Requested time slot is not available'
+        Book-->>Book: No exact fresh proposal or $book conflict
         Book-->>UI: {ok: false, reason: 'slot_taken'}
         UI->>UI: Re-fetch slots
     end
@@ -184,7 +180,8 @@ sequenceDiagram
 
     D->>UI: Open a patient's chat
     D->>UI: Ask a question
-    UI->>Chat: $execute {patientId, question, threadId}
+    UI->>Chat: $execute {npi, patientId, question, threadId}
+    Chat->>M: Resolve Practitioner and verify booked relationship
     Chat->>M: Live read: Patient, Condition, MedicationRequest,\nAllergyIntolerance, Encounter (fresh every call)
     Chat->>Gemini: One call, single-turn, system prompt enforces\nrelay-only (never diagnose/interpret/advise)
     Chat->>Chat: Output keyword guard (defense in depth)
@@ -197,7 +194,7 @@ sequenceDiagram
 
 | System | Direction | What we use it for | Auth |
 |---|---|---|---|
-| Medplum | Read/write | The entire application's data and runtime: Patient/Condition/MedicationRequest/AllergyIntolerance/Encounter (read), Practitioner/PractitionerRole/Schedule/Slot/Appointment/Communication/Device/HealthcareService (read/write), plus hosting the Bots themselves | Confirmed OAuth2 client-credentials (`startClientLogin`) for the seeding tool; frontend uses standard Medplum sign-in; bots receive an already-authenticated `MedplumClient` |
+| Medplum `5.1.27` contract | Read/write | The entire application's data and runtime, including `Appointment/$find`, `Appointment/$book`, and instance-level `Appointment/{id}/$cancel`; all operation URLs use `medplum.fhirUrl(...)` | OAuth2 client-credentials (`startClientLogin`) for the seeding tool; frontend uses standard Medplum sign-in; bots receive an already-authenticated `MedplumClient` |
 | NPPES | Read-only | Doctor discovery by specialty/location when no exact previous-physician match exists | Public API, no auth — confirmed no CORS headers, so only reachable from a bot |
 | Gemini | Read-only (stateless calls) | `agent-intake`: one structured call → specialty/reason/urgency/summary. `agent-patient-chat`: one call per message, grounded in that patient's live data | API key (Bot secret) |
 
@@ -211,18 +208,20 @@ service.
 Full field-level shape lives in `Doctor_Appointment_Agent_Data_Model.md`;
 this is just the entity inventory.
 
-- **Read-only, seeded once**: `Patient`, `Condition`, `MedicationRequest`,
-  `AllergyIntolerance`, `Encounter`
+- **Seeded with deterministic PUT ids**: `Patient`, `Practitioner`,
+  `PractitionerRole`, `Organization`, `Condition`, `MedicationRequest`,
+  `AllergyIntolerance`, `Encounter`, plus fixed bootstrap resources. Source
+  ids remain usable in references because no seed resource is POSTed.
 - **Two doctor pools, both written into Medplum**: previous physicians
   (from the seeded Synthea bundles, specialty-enriched via the tiered
   matcher) and new doctors (from NPPES, mirrored lazily on first
   scheduling request) — both end up as `Practitioner` + `PractitionerRole`
   either way
-- **Scheduling** (Medplum-native): `Schedule` (`serviceType` lists both
-  HealthcareServices below), `Slot` (top-level resource, only materializes
-  once held/busy — never `contained` in an Appointment), `Appointment`,
-  `HealthcareService` (two singletons: Office Visit, Urgent Visit —
-  selected by the patient's `urgency`)
+- **Scheduling** (Medplum-native): `Schedule` lists both HealthcareServices
+  and has two service-specific `SchedulingParameters` groups;
+  `$find` returns proposed Appointments with contained Slots, while `$book`
+  persists the booked Appointment and a top-level Slot. Native `$cancel`
+  atomically cancels the Appointment and deletes its Slot.
 - **AI-generated artifacts**: `Communication` (pre-visit summary and every
   chat turn — same resource type for both), `Device` (marks
   machine-authored content)
@@ -248,10 +247,13 @@ flowchart LR
 ```
 
 No Docker Compose, no separate containers for "api"/"ui" as in the
-original design — the frontend is a static/dev-served React build, and
-all backend logic lives inside Medplum itself as deployed Bots. Medplum,
-NPPES, and Gemini are external dependencies, not part of this project's
-own deployment surface.
+original design — the frontend is a static/dev-served React build, and all
+backend logic lives inside Medplum. `deploy-bots.ts` deploys exactly seven
+Bots: `block-availability`, `reschedule-appointment`, `agent-intake`,
+`agent-find-doctors`, `agent-ensure-doctor`, `agent-book-appointment`, and
+`agent-patient-chat`. The direct-deploy path resolves each Bot's own Binary
+placeholders and calls `$deploy`; resource creation alone is not treated as
+a deployment.
 
 ## 9. Assumptions & Constraints
 
@@ -275,16 +277,18 @@ own deployment surface.
   posture; the app adds no additional access-control layer beyond what's
   described in §9. A demonstration `AccessPolicy` is noted as optional
   future work in the Design doc, not part of the core flow.
-- **Observability** (logging/metrics/tracing) — not designed; manual
-  walkthrough is the verification method (Design doc §13).
+- **Observability** (logging/metrics/tracing) — not designed. Verification
+  combines automated tests, live contract preflights, and a manual end-to-end
+  walkthrough (Design doc §13).
 
 ## 11. Out of Scope
 
 Unchanged from the context doc: diagnosis, adaptive questionnaires,
-clinical decision support, medication recommendations, cancellations,
-waitlists, reminders, recurring appointments — plus, specific to this
-rebuild, any clinical judgment or advice from the doctor-facing chat
-agent, and real per-doctor authentication.
+clinical decision support, medication recommendations, waitlists, reminders,
+and recurring appointments. Patient-agent cancellation/rescheduling is not
+exposed, but the retained provider UI supports native cancellation and a
+reschedule Bot. Clinical advice from the doctor-facing chat agent and real
+per-doctor authentication remain out of scope.
 
 ## 12. Related Documents
 
