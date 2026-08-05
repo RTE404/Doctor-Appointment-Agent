@@ -1,5 +1,15 @@
 # Doctor Appointment Agent — High-Level Design (HLD)
 
+> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
+> banner for the full list. Specifically here: the Flow 1 sequence diagram's
+> `$hold`/`$confirm` steps and the architecture diagram's `agent-expire-holds`
+> node are stale (booking is now a single `$book` call against `$find`'s own
+> output, with no hold-expiry bot at all); the External Interfaces table's
+> scheduling description should read "`$find`/`$book`/`$cancel`". The
+> implementation plan
+> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
+> is authoritative on these points.
+
 Sits above `Doctor_Appointment_Agent_Design.md` (module/bot responsibilities,
 fork strategy, scheduling mechanics, error handling, testing) — this
 document covers the system-level view: context, architecture, both

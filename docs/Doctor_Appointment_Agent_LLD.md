@@ -1,5 +1,15 @@
 # Doctor Appointment Agent — Low-Level Design
 
+> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
+> banner for the full list. Specifically here: `agent-book-appointment.ts`'s
+> and `agent-expire-holds.ts`'s function-level designs no longer match the
+> implementation (booking is a single `$book` call, the expire-holds bot
+> doesn't exist). The implementation plan
+> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
+> has the current, source-verified version of every bot's actual logic —
+> treat it as authoritative on function bodies, this doc as authoritative
+> on the overall module map.
+
 Supersedes the Python-era LLD. Function-by-function design for every bot
 and shared library module in `Doctor_Appointment_Agent_Backend.md`. Each
 entry: signature, purpose, inputs/outputs, step-by-step logic, and errors.

@@ -1,5 +1,15 @@
 # Doctor Appointment Agent — Backend Structure
 
+> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
+> banner for the full list. Specifically here: `agent-expire-holds.ts` and
+> `cancel-appointment.ts` no longer exist in the bot roster (no hold state
+> to expire; cancellation uses Medplum's native `$cancel` directly); the
+> roster also gains `agent-ensure-doctor.ts`, `reschedule-appointment.ts`
+> (new), and `lib/chunk-bundle.ts`. The implementation plan
+> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
+> has the current file layout — treat it as authoritative on the exact
+> bot/tool roster.
+
 Supersedes the Python/FastAPI-era Backend doc. There is no longer a
 separate backend service — this document covers the two things that
 replace it: the Medplum Bots (`src/bots/agent/`, inside the forked

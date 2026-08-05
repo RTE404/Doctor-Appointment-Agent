@@ -1,5 +1,17 @@
 # Doctor Appointment Agent — Data Model
 
+> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
+> banner for the full list. Specifically here: `Schedule`'s `SchedulingParameters`
+> extension needs **two** instances (one per HealthcareService, each with a
+> `service` sub-extension and an explicit `alignmentInterval`), not the one
+> shown below — a single service-less extension is silently ignored by
+> Medplum. `Slot`'s "never contained inside an Appointment" description
+> refers to how Slot is ever *persisted*; a `$find`-proposed Appointment
+> legitimately carries a transient `contained` Slot in the *request* sent
+> to `$book`, which is not a contradiction. The implementation plan
+> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
+> is authoritative on these points.
+
 Supersedes the Python-era Data Model doc. Medplum remains the only
 datastore — nothing here changes that — but the specific resources used
 have expanded (PractitionerRole, Communication, Device, HealthcareService

@@ -1,5 +1,24 @@
 # Doctor Appointment Agent — Application Design
 
+> ⚠️ **Superseded on specific points by the implementation plan
+> (2026-08-05 correction pass).** This doc and the LLD/Specs/HLD/Data
+> Model/Backend/Context docs are still the source of truth for
+> architecture and rationale — but `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`
+> is authoritative wherever the two disagree on these specific points,
+> confirmed against real Medplum source after this doc was written:
+> booking uses a single **`$book`** call (not `$hold`→`$confirm`) applied
+> to the exact proposed Appointment `$find` returns, with the missing
+> Patient participant added before booking; there is **no `agent-expire-holds`
+> bot** (no hold state exists to expire); cancellation uses Medplum's
+> **native `$cancel`** operation directly (no hand-rolled
+> `cancel-appointment.ts` bot); `Schedule` needs **two** `SchedulingParameters`
+> extensions (one per HealthcareService, each with a `service` sub-extension
+> and an explicit `alignmentInterval`), not one. See
+> `docs/Issues_Audit_Response.md` for the full verification trail. This
+> doc will be reconciled in a future pass; until then, treat the plan as
+> authoritative on these points and this doc as authoritative on
+> everything else.
+
 Supersedes the original Python/FastAPI + Streamlit design. New
 requirements made this a Medplum-native, two-sided application; the
 Python implementation (8 of 14 tasks completed, in

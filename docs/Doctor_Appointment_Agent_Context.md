@@ -1,5 +1,14 @@
 # Doctor Appointment Agent POC — Context & Design Decisions
 
+> ⚠️ **Superseded on one point** — see `Doctor_Appointment_Agent_Design.md`'s
+> banner for the full list of what changed in the 2026-08-05 correction
+> pass. Specifically here: this doc's non-goals list "cancellations" as
+> excluded, but the implementation plan includes a native-`$cancel`-backed
+> cancel action and a `$book`-backed reschedule action for the fork's
+> pre-existing provider-side pages (not part of the new patient/doctor
+> agent flow) — a scope decision made during implementation, not yet
+> reconciled back into this doc's non-goals list.
+
 ## Goal
 
 Build an AI-powered **Doctor Appointment Agent** with two connected

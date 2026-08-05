@@ -1,5 +1,14 @@
 # Doctor Appointment Agent — Functional Specification
 
+> ⚠️ **Superseded on specific points** — see `Doctor_Appointment_Agent_Design.md`'s
+> banner for the full list (booking uses `$book` not `$hold`/`$confirm`,
+> no `agent-expire-holds`, native `$cancel`, per-service `SchedulingParameters`).
+> Specifically here: **FR-10**'s "via `$hold`'s atomic check" and the
+> traceability table's `$hold → $confirm` references are stale — read
+> "`$book`'s atomic check" instead. The implementation plan
+> (`docs/superpowers/plans/2026-08-04-medplum-native-implementation.md`)
+> is authoritative on these points.
+
 Formalizes the workflow from `Doctor_Appointment_Agent_Context.md` and the
 HLD into testable functional requirements, now covering both the
 patient-facing and doctor-facing surfaces. Supersedes the Python-era Specs
