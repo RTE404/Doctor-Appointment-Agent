@@ -145,7 +145,10 @@ on which side of the boundary you're reading.
   3. One call to Gemini's OpenAI-compatible endpoint (`event.secrets
      ['GEMINI_API_KEY']`, model `gemini-2.5-flash-lite`, `temperature: 0`,
      JSON response mode), with the grounding block and the complaint text,
-     returning `{specialty, reason, urgency, summary}`.
+     returning `{specialty, reason, summary}`. No urgency/triage
+     classification is requested or produced (decision recorded
+     2026-08-06) — this is a POC where a patient wants to see a doctor,
+     not a clinical triage system.
   4. `normalizeLlmSpecialty(result.specialty)` — if it returns
      `undefined`, return a clarification-needed response rather than
      guessing (FR-4's "never silently default" rule).
@@ -154,9 +157,9 @@ on which side of the boundary you're reading.
      Patient/{patientId}`, `sender: Device/ai-appointment-agent`,
      `payload.contentString = result.summary`, `topic` = the normalized NUCC
      specialty, `reasonCode` = the concise reason, `note` = the original
-     complaint, `priority` = urgency, and `meta.tag: ai-generated`. It has no
+     complaint, and `meta.tag: ai-generated`. It has no
      recipient yet because the doctor is not chosen.
-- **Output**: `{intent: {specialtyCode, specialtyLabel, reason, urgency},
+- **Output**: `{intent: {specialtyCode, specialtyLabel, reason},
   summaryCommunicationId: string}`, or `{needsClarification: true}`.
 - **Errors**: Gemini/network failure propagates as a bot failure (no
   silent fallback).
@@ -196,7 +199,7 @@ on which side of the boundary you're reading.
 
 ## `src/bots/agent/lib/ensurePractitionerAndSchedule.ts`
 
-### `ensurePractitionerAndSchedule(medplum, npi: string, candidate?: DoctorCandidate): Promise<{practitionerId, scheduleId, healthcareServiceIds: {routine: string, urgent: string}}>`
+### `ensurePractitionerAndSchedule(medplum, npi: string, candidate?: DoctorCandidate): Promise<{practitionerId, scheduleId, healthcareServiceId: string}>`
 - **Purpose**: lazy provisioning. Deliberately a plain function, not a bot
   — but since step 1 can call NPPES (no CORS, must run bot-side), this
   function only ever runs *inside* a bot. Its sole caller is the
@@ -214,23 +217,21 @@ on which side of the boundary you're reading.
      same logic as the retired Python `template.py`, just producing a
      `SchedulingParameters` extension instead of Postgres rows), resolve
      the doctor's timezone from a small state→IANA table, and create the
-     `Schedule` with `serviceType` holding **two**
-     entries, one per HealthcareService (Office Visit, Urgent Visit) —
-     confirmed both the array cardinality (`0..*`) and the exact matching
-     mechanic directly in Medplum's `servicetype.ts`: each entry is a
+     `Schedule` with `serviceType` holding a **single**
+     entry, for the one HealthcareService ("Office Visit") — there is no
+     urgency/triage classification in this product (decision recorded
+     2026-08-06), so no second entry is needed. Confirmed both the array
+     cardinality (`0..*`) and the exact matching mechanic directly in
+     Medplum's `servicetype.ts`: the entry is a
      `CodeableConcept` carrying the `service-type-reference` extension
      (`{url: 'https://medplum.com/fhir/service-type-reference',
-     valueReference: {reference: 'HealthcareService/{id}'}}`), and
-     `isCodeableReferenceLikeTo` matches with `.some(...)` across the
-     array — "is the requested service present," not "is it the only
-     one" — so either service can be requested via `$find`'s
-     `service-type-reference` depending on the patient's `urgency`. Add
-     exactly two Schedule-level `SchedulingParameters` groups, one per
-     HealthcareService. Each group carries `service`, `duration`, a matching
-     `alignmentInterval`, `timezone`, and the deterministic availability
-     blocks; a group without `service` would not match either service.
-- **Output**: the practitioner/schedule ids plus **both** HealthcareService
-  ids, keyed by which urgency they serve — the caller picks the right one.
+     valueReference: {reference: 'HealthcareService/{id}'}}`). Add exactly
+     one Schedule-level `SchedulingParameters` group. It carries `service`,
+     `duration`, a matching `alignmentInterval`, `timezone`, and the
+     deterministic availability blocks; a group without `service` would not
+     match the service.
+- **Output**: the practitioner/schedule ids plus the single HealthcareService
+  id.
 - **Idempotency**: the identifier/actor searches in steps 1–2 are what
   make repeated calls for the same NPI safe; a concurrent first-time race
   for the same NPI is an accepted, low-probability edge case for a
@@ -251,10 +252,10 @@ on which side of the boundary you're reading.
   a previous-physician pick (already in Medplum, no NPPES data needed).
 - **Logic**: `ensurePractitionerAndSchedule(medplum, npi, candidate)`,
   nothing else.
-- **Output**: `{practitionerId, scheduleId, healthcareServiceIds:
-  {routine, urgent}}`. The UI then picks `healthcareServiceIds[urgency]`
-  and calls `$find` directly against Medplum with `scheduleId` and that
-  service id — no further bot round-trip to view slots.
+- **Output**: `{practitionerId, scheduleId, healthcareServiceId}`. The UI
+  then calls `$find` directly against Medplum with `scheduleId` and that
+  service id — no urgency-based selection, no further bot round-trip to
+  view slots.
 - **Errors**: NPPES/Medplum failure propagates as a genuine bot failure —
   there's no partial-success case here.
 
@@ -266,7 +267,7 @@ on which side of the boundary you're reading.
 - **Purpose**: FR-9/FR-10.
 - **Input**: `{patientId, practitionerId, scheduleId, start, end,
   summaryCommunicationId}`. The browser sends no HealthcareService id,
-  specialty, urgency, proposed Appointment, or clinical display metadata.
+  specialty, proposed Appointment, or clinical display metadata.
 - **Logic**:
   1. Read `Patient/{patientId}`, `Practitioner/{practitionerId}`,
      `Schedule/{scheduleId}`, the Practitioner's NUCC-coded
@@ -274,15 +275,15 @@ on which side of the boundary you're reading.
   2. Validate that the Schedule actor is that Practitioner; the summary's
      subject is that Patient; and the summary has the expected category,
      Device sender, `ai-generated` tag, and `preparation` status.
-  3. Derive specialty, urgency, reason, complaint, and the routine/urgent
-     HealthcareService entirely from the authoritative role and
-     Communication. Reject mismatches instead of accepting browser claims.
+  3. Derive specialty, reason, complaint, and the single HealthcareService
+     entirely from the authoritative role and Communication. Reject
+     mismatches instead of accepting browser claims.
   4. Call type-level `$find` with the authoritative service, Schedule, and a
      narrow range covering `start`/`end`. Parse its **bare Bundle** and find
      an exact proposed Appointment whose `contained` Slot has the requested
      Schedule, start, and end. If none exists, return `slot_taken`.
   5. Take that exact fresh proposal, add the Patient participant, and add
-     `description`, `comment`, `reasonCode`, and `priority` derived from the
+     `description`, `comment`, and `reasonCode` derived from the
      Communication. Do not hand-reconstruct its service or contained Slot.
   6. Send a `Parameters` request whose `appointment` parameter contains that
      proposal to `medplum.fhirUrl('Appointment', '$book')`. Parse the bare

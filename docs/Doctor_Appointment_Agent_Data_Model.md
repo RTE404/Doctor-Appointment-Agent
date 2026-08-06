@@ -135,8 +135,8 @@ as a display copy.
 |---|---|---|
 | `id` | string | |
 | `actor` | Reference(Practitioner), **exactly one** | confirmed hard requirement — `getSchedulingParametersGroup` throws `'Scheduling only supported on schedules with exactly one actor'` if violated |
-| `serviceType` | `CodeableConcept[]`, **0..\* — confirmed directly** (`min:0, max:"*"` in Medplum's R4 StructureDefinition) | includes **both** HealthcareServices (Office Visit + Urgent Visit) so either can be requested via `$find`'s `service-type-reference` param depending on the patient's `urgency`. **Confirmed exact matching mechanic** (`packages/server/src/util/servicetype.ts`): R4 has no native `CodeableReference`, so Medplum represents "this concept points at that HealthcareService" via an extension embedded on the `CodeableConcept` itself — `{extension: [{url: 'https://medplum.com/fhir/service-type-reference', valueReference: {reference: 'HealthcareService/{id}'}}]}` — one such entry per HealthcareService. `isCodeableReferenceLikeTo` checks with `.some(...)` across the array — "is the requested service *present*," not "is it the only one" — so a two-entry array naturally supports both visit types on one Schedule |
-| extension: `SchedulingParameters` | complex, **confirmed exact URL**: `https://medplum.com/fhir/StructureDefinition/SchedulingParameters` | exactly **two instances**, one per HealthcareService; each contains its own `service`, `duration`, matching `alignmentInterval`, `timezone`, and `availability` sub-extensions |
+| `serviceType` | `CodeableConcept[]`, **0..\* — confirmed directly** (`min:0, max:"*"` in Medplum's R4 StructureDefinition) | holds a **single** entry pointing at the one "Office Visit" HealthcareService — there is no urgency/triage classification in this product (decision recorded 2026-08-06), so no second entry is needed. **Confirmed exact matching mechanic** (`packages/server/src/util/servicetype.ts`): R4 has no native `CodeableReference`, so Medplum represents "this concept points at that HealthcareService" via an extension embedded on the `CodeableConcept` itself — `{extension: [{url: 'https://medplum.com/fhir/service-type-reference', valueReference: {reference: 'HealthcareService/{id}'}}]}` |
+| extension: `SchedulingParameters` | complex, **confirmed exact URL**: `https://medplum.com/fhir/StructureDefinition/SchedulingParameters` | exactly **one instance**, containing `service`, `duration`, matching `alignmentInterval`, `timezone`, and `availability` sub-extensions |
 
 **`SchedulingParameters` sub-extensions** (confirmed directly from
 `scheduling-parameters.ts`): `duration`, `alignmentInterval`,
@@ -148,10 +148,10 @@ as a display copy.
 `during`).
 
 The service association is mandatory for this design. A Schedule-level
-`SchedulingParameters` extension with no `service` sub-extension matches
-neither HealthcareService and is silently ignored. Office Visit uses a
-30-minute `duration` and `alignmentInterval`; Urgent Visit uses 15 minutes
-for both.
+`SchedulingParameters` extension with no `service` sub-extension does not
+match the HealthcareService and is silently ignored. Office Visit uses a
+30-minute `duration` and matching `alignmentInterval` — the only duration in
+the product, since there is no urgency-driven visit-type split.
 
 **Gotcha, confirmed from source, worth documenting precisely**:
 `availableTime`'s `daysOfWeek` sub-extension repeats once per day — a
@@ -178,7 +178,7 @@ thereafter. Schedules start fully open — no fake pre-booked history.
 |---|---|---|
 | `id` | string | free time is computed live by `$find`, never persisted. A `$find` result carries a transient id-less Slot in `Appointment.contained`; after `$book`, the created Slot is a standalone, independently searchable resource referenced from `Appointment.slot[]`. Native `$cancel` deletes the persisted Slot atomically. |
 | `schedule` | Reference(Schedule) | |
-| `start`/`end` | dateTime | 30 or 15-minute granularity, matching whichever `HealthcareService.duration` was requested |
+| `start`/`end` | dateTime | 30-minute granularity, matching the single `HealthcareService.duration` |
 | `status` | code | transient proposal and persisted booked Slot use `busy`; provider-created blocks use `busy-unavailable` |
 
 ### Appointment
@@ -189,13 +189,12 @@ thereafter. Schedules start fully open — no fake pre-booked history.
 | `status` | code | `proposed` in a `$find` response → `booked` after `$book`; `cancelled` after native `$cancel` |
 | `start`/`end` | dateTime | |
 | `participant[]` | Patient + Practitioner references | `$find` supplies the Schedule actor only; `agent-book-appointment` validates it and adds the Patient before `$book`. `Appointment:actor` and `Appointment:patient` are confirmed search parameters. |
-| `serviceType` | CodeableConcept(HealthcareService reference extension) | required by `$book`; selected server-side from the trusted intake Communication's urgency (`routine` → Office Visit, `urgent` → Urgent Visit) |
+| `serviceType` | CodeableConcept(HealthcareService reference extension) | required by `$book`; always the single "Office Visit" HealthcareService — there is no urgency-based selection |
 | `contained` | Resource[] | on a proposed `$find` Appointment only; contains the transient Slot that `$book` validates. Never present on the persisted booked Appointment. |
 | `slot` | Reference(Slot)[] | populated by `$book` with references to the newly persisted top-level Slot; used by reschedule and native `$cancel` |
 | `description` | string | **the "stated issue" shown on the doctor's queue card** — derived from the trusted intake Communication and placed on the proposal before `$book` |
 | `comment` | string | the patient's verbatim complaint text (longer, raw) — not shown on the queue card, only `description` is |
 | `reasonCode[0].text` | string | same value as `description` — a structured-field copy for any FHIR-standard tooling that reads `reasonCode` instead |
-| `priority` | integer | derived from `urgency` |
 
 The browser never supplies an Appointment as booking authority. It sends
 only Patient/Practitioner/Schedule ids, selected times, and the intake
@@ -217,7 +216,6 @@ just not one anything in this design queries by.
 | `id` | string | |
 | `status` | code | `preparation` (drafted at intake, no recipient yet) → `completed` (once the doctor is known, at booking time) |
 | `category[0].coding` | small custom CodeSystem | `ai-previsit-summary` or `ai-chat` |
-| `priority` | code | the patient's stated `urgency`, as a real code |
 | `topic` | CodeableConcept | normalized NUCC specialty selected at intake; used by booking to verify the requested PractitionerRole |
 | `reasonCode[0].text` | string | normalized short booking reason |
 | `note[0].text` | string | patient's original complaint text |
@@ -240,17 +238,16 @@ not just a banner in the UI.
 
 ### HealthcareService *(new — required by `$find`/`$book`)*
 
-Two singletons, both created at bootstrap: "Office Visit" (30-minute
-`duration`) and "Urgent Visit" (15-minute `duration`). Every `Schedule`
-lists both in its `serviceType` array (see `Schedule` above); which one a
-given booking uses is decided by the patient's stated `urgency` —
-`routine` → Office Visit, `urgent` → Urgent Visit — resolved into concrete
-ids by `agent-ensure-doctor` (LLD) and picked by the caller before
-displaying slots. `agent-book-appointment` independently derives the
-service again from the authoritative Communication before its fresh
-server-side `$find`. This is settled, load-bearing behavior, not
-an open item. `HealthcareService` is about *what kind of visit*, not *what
-kind of doctor* — specialty lives on `PractitionerRole`, not here.
+One singleton, "Office Visit" (30-minute `duration`), created at bootstrap.
+Every `Schedule` lists it in its `serviceType` array (see `Schedule` above).
+There is no urgency/triage classification in this product (decision
+recorded 2026-08-06): the app is just a patient who wants to see a doctor,
+so every booking uses the same single visit type. `agent-ensure-doctor`
+(LLD) resolves it into a concrete id; `agent-book-appointment` independently
+re-derives the same id from the authoritative Communication before its
+fresh server-side `$find`, rather than trusting a browser-supplied id.
+`HealthcareService` is about *what kind of visit*, not *what kind of
+doctor* — specialty lives on `PractitionerRole`, not here.
 
 ## "Every patient who's ever booked with NPI X"
 

@@ -20,8 +20,9 @@
 - Every scheduling operation call (`$find`, `$book`, `$cancel`) uses Medplum's **real, verified `5.1.27` request/response contract**, not an assumed one. `$find` and `$book` are `Appointment` type-level operations at `/fhir/R4/Appointment/$find` and `/fhir/R4/Appointment/$book`; their HTTP responses are **bare `Bundle` resources**, because Medplum's single `return` output bypasses a `Parameters` wrapper. Only the `$book` **request** is a `Parameters` resource whose `appointment` input wraps the proposed `Appointment`. A proposed Appointment posted to `$book` must contain the `Slot` returned by a fresh server-side `$find`; browser-supplied Appointment objects are never trusted. Build every operation URL with `medplum.fhirUrl(...)` so it cannot accidentally resolve against the non-FHIR API root.
 - `Slot` only ever exists as `contained` inside a **proposed** Appointment (pre-booking, from `$find`'s output) or as a real top-level resource once `$book` has actually created it (confirmed: `$book`'s transaction-response Bundle includes both the booked `Appointment` and its `Slot` as separate persisted resources) — never `contained` inside an already-`booked` Appointment.
 - Cancellation uses Medplum's **native** `POST /fhir/R4/Appointment/{id}/$cancel` directly — confirmed to run atomically (serializable transaction: update status to `cancelled`, delete every referenced Slot) in `cancel.ts`. No custom cancellation bot exists in this plan; hand-rolling that logic was unnecessary risk once the native operation was actually checked.
-- Every `Schedule` carries **two separate `SchedulingParameters` extensions**, one per HealthcareService, each with its own `service` sub-extension (`valueReference` to that `HealthcareService`) plus `duration`/`alignmentInterval`/`timezone`/`availability`. Confirmed directly in `scheduling-parameters.ts`: a Schedule-level extension is matched against the *specific requested* HealthcareService via its `service` sub-extension — an extension with no `service` sub-extension matches nothing and is silently ignored (falls back to HealthcareService-level defaults instead of throwing). A single "one extension covers both services" design (this plan's original approach) would have made the NPI-seeded weekly template never actually apply. `alignmentInterval` is explicitly set to match each service's own `duration` (30 min / 15 min) — confirmed the default when unset is 60 minutes, and `$find` steps candidate start times by this interval independent of the requested duration, so leaving it unset would silently offer only one start time per hour for either service.
-- `Schedule.serviceType` still lists **both** HealthcareServices (Office Visit 30 min, Urgent Visit 15 min) as `CodeableConcept`s carrying the `https://medplum.com/fhir/service-type-reference` extension — confirmed exact mechanic in `packages/server/src/util/servicetype.ts` (Data Model doc, `Schedule.serviceType`) — this part was already correct.
+- There is no urgency/triage classification anywhere in this product (decision recorded 2026-08-06): this is a POC where a patient just wants to see a doctor, not a clinical triage system. There is exactly **one** `HealthcareService` ("Office Visit," 30-minute duration) and exactly **one** visit type. The previously-planned second "Urgent Visit" HealthcareService, the routine/urgent split, and every `urgency`/`priority` field derived from it have been removed from the design.
+- Every `Schedule` carries **one `SchedulingParameters` extension**, with a `service` sub-extension (`valueReference` to the single `HealthcareService`) plus `duration`/`alignmentInterval`/`timezone`/`availability`. Confirmed directly in `scheduling-parameters.ts`: a Schedule-level extension is matched against the *specific requested* HealthcareService via its `service` sub-extension — an extension with no `service` sub-extension matches nothing and is silently ignored (falls back to HealthcareService-level defaults instead of throwing). `alignmentInterval` is explicitly set to match the service's own 30-minute `duration` — confirmed the default when unset is 60 minutes, and `$find` steps candidate start times by this interval independent of the requested duration, so leaving it unset would silently offer only one start time per hour.
+- `Schedule.serviceType` lists the single HealthcareService (Office Visit, 30 min) as a `CodeableConcept` carrying the `https://medplum.com/fhir/service-type-reference` extension — confirmed exact mechanic in `packages/server/src/util/servicetype.ts` (Data Model doc, `Schedule.serviceType`).
 - NUCC provider taxonomy codes are the *only* specialty vocabulary, and this means **real codes, not the specialty's plain-English label**, must land in `PractitionerRole.specialty.coding.code` — a seeding bug in an earlier pass of this plan wrote strings like `"Cardiology"` into that field instead of `207RC0000X`. `SPECIALTY_TABLE` (`src/config/specialties.ts`) is the single place label↔NUCC-code translation happens; the seeder imports it rather than re-inventing the mapping.
 - Every seeded resource has a deterministic FHIR id and is written with an unconditional `PUT ResourceType/{id}` upsert. Medplum replaces caller ids on `POST`, including Bundle-entry POSTs, so the seeder must never infer a final reference from a POSTed source id. Deterministic PUT is the verified identity-preserving path: references such as `Patient/{synthea-id}` remain valid, retries are idempotent, and fixed bootstrap references such as `Device/ai-appointment-agent` resolve exactly.
 - All `@medplum/*` packages are pinned to the same exact version, `5.1.27`. This is the current official package line and matches the source used to verify these contracts. Do not mix Medplum package versions. Before seeding, the server must pass Task 10's version/identity preflight; before release, it must also pass Task 26's live `$find`/`$book`/`$cancel`/`SchedulingParameters` preflight. A hosted target need not expose the same patch number, but it must demonstrate the same behavior.
@@ -1721,7 +1722,7 @@ are not the identity mechanism.
 - Test: `tools/seed/agent-config.test.ts` (validates the JSON's shape, not a live upload)
 
 **Interfaces:**
-- Produces: a `Bundle` (type `transaction`) deterministically upserting `HealthcareService/office-visit`, `HealthcareService/urgent-visit`, `Device/ai-appointment-agent`, and a small `CodeSystem`/`ValueSet` pair for `ai-previsit-summary`/`ai-chat` — uploaded via Task 9's CLI bootstrap step, or manually via the fork's existing `UploadDataPage`.
+- Produces: a `Bundle` (type `transaction`) deterministically upserting `HealthcareService/office-visit`, `Device/ai-appointment-agent`, and a small `CodeSystem`/`ValueSet` pair for `ai-previsit-summary`/`ai-chat` — uploaded via Task 9's CLI bootstrap step, or manually via the fork's existing `UploadDataPage`. There is only one HealthcareService: no urgency/triage classification exists in this product (decision recorded 2026-08-06), so no second "Urgent Visit" service is needed.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1743,15 +1744,14 @@ describe('data/core/agent-config.json', () => {
     expect(bundle.type).toBe('transaction');
   });
 
-  test('upserts both HealthcareServices at their fixed ids', () => {
+  test('upserts the single HealthcareService at its fixed id', () => {
     const officeVisit = bundle.entry.find((e: any) => e.resource?.id === 'office-visit');
-    const urgentVisit = bundle.entry.find((e: any) => e.resource?.id === 'urgent-visit');
     expect(officeVisit.resource.resourceType).toBe('HealthcareService');
-    expect(urgentVisit.resource.resourceType).toBe('HealthcareService');
     expect(officeVisit.request).toStrictEqual({ method: 'PUT', url: 'HealthcareService/office-visit' });
-    expect(urgentVisit.request).toStrictEqual({ method: 'PUT', url: 'HealthcareService/urgent-visit' });
     expect(officeVisit.resource.identifier).toContainEqual({ system: 'http://example.com/agent-config', value: 'office-visit' });
-    expect(urgentVisit.resource.identifier).toContainEqual({ system: 'http://example.com/agent-config', value: 'urgent-visit' });
+    // There is no second "Urgent Visit" HealthcareService — no urgency/triage
+    // classification exists in this product (decision recorded 2026-08-06).
+    expect(bundle.entry.find((e: any) => e.resource?.id === 'urgent-visit')).toBeUndefined();
   });
 
   test('creates the ai-appointment-agent Device', () => {
@@ -1801,24 +1801,6 @@ Expected: FAIL — file doesn't exist.
         ]
       },
       "request": { "method": "PUT", "url": "HealthcareService/office-visit" }
-    },
-    {
-      "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000002",
-      "resource": {
-        "resourceType": "HealthcareService",
-        "id": "urgent-visit",
-        "identifier": [{ "system": "http://example.com/agent-config", "value": "urgent-visit" }],
-        "name": "Urgent Visit",
-        "extension": [
-          {
-            "url": "https://medplum.com/fhir/StructureDefinition/SchedulingParameters",
-            "extension": [
-              { "url": "duration", "valueDuration": { "value": 15, "unit": "min", "system": "http://unitsofmeasure.org", "code": "min" } }
-            ]
-          }
-        ]
-      },
-      "request": { "method": "PUT", "url": "HealthcareService/urgent-visit" }
     },
     {
       "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000003",
@@ -2178,14 +2160,12 @@ returns exactly one result, and a corresponding `PractitionerRole?practitioner=P
 
 ```
 GET /fhir/R4/HealthcareService?name=Office Visit
-GET /fhir/R4/HealthcareService?name=Urgent Visit
 GET /fhir/R4/Device?identifier=http://example.com/agent-config|ai-appointment-agent
 ```
 
 Expected: each returns exactly one resource.
 
-Also read `HealthcareService/office-visit`,
-`HealthcareService/urgent-visit`, and `Device/ai-appointment-agent`
+Also read `HealthcareService/office-visit` and `Device/ai-appointment-agent`
 directly. Each read must succeed at that exact id; a name/identifier search
 alone would not prove that fixed references used elsewhere can resolve.
 
@@ -3132,12 +3112,13 @@ export const INTAKE_SYSTEM_PROMPT = `You are an intake assistant for a doctor ap
 patient's clinical history and a short natural-language complaint, you must:
 1. Infer the single most relevant medical specialty for this complaint.
 2. Extract a short (one sentence) plain-English reason for the visit.
-3. Classify urgency as exactly "routine" or "urgent".
-4. Write a 2-3 sentence pre-visit summary a doctor could read before seeing this patient.
+3. Write a 2-3 sentence pre-visit summary a doctor could read before seeing this patient.
 
-You must never diagnose, speculate about a specific condition, or suggest a
-treatment. Relay and summarize only what is asked. Respond with strict JSON:
-{"specialty": string, "reason": string, "urgency": "routine"|"urgent", "summary": string}`;
+You must never diagnose, speculate about a specific condition, suggest a
+treatment, or classify urgency/triage in any way — this system books a single,
+undifferentiated visit type; it does not triage. Relay and summarize only what
+is asked. Respond with strict JSON:
+{"specialty": string, "reason": string, "summary": string}`;
 
 export function buildIntakeUserPrompt(context: PatientClinicalContext, complaintText: string): string {
   const conditions = context.conditions.map((c) => c.code?.text).filter(Boolean).join(', ') || 'none recorded';
@@ -3221,7 +3202,9 @@ Every bot below follows Medplum's standard shape: `export async function handler
 
 The preparation `Communication` is the server-side source of truth for the
 later booking. It stores the normalized specialty, booking reason, original
-complaint, urgency, and generated summary. The browser receives the id for
+complaint, and generated summary. There is no urgency/triage field —
+no urgency/triage classification exists in this product (decision recorded
+2026-08-06). The browser receives the id for
 navigation, but Task 21 re-reads and validates this resource instead of
 trusting clinical metadata echoed back by the browser.
 
@@ -3231,7 +3214,7 @@ trusting clinical metadata echoed back by the browser.
 
 **Interfaces:**
 - Consumes: `loadPatientClinicalContext` (Task 15), `normalizeLlmSpecialty` (Task 11), `INTAKE_SYSTEM_PROMPT`/`buildIntakeUserPrompt` (Task 16).
-- Produces: `handler(medplum, event: BotEvent<{patientId: string; complaintText: string}>): Promise<IntakeResult>` where `IntakeResult = {intent: {specialtyCode: string; specialtyLabel: string; reason: string; urgency: 'routine'|'urgent'}; summaryCommunicationId: string} | {needsClarification: true}` — `specialtyCode` is consumed by `agent-find-doctors.ts` (Task 18).
+- Produces: `handler(medplum, event: BotEvent<{patientId: string; complaintText: string}>): Promise<IntakeResult>` where `IntakeResult = {intent: {specialtyCode: string; specialtyLabel: string; reason: string}; summaryCommunicationId: string} | {needsClarification: true}` — `specialtyCode` is consumed by `agent-find-doctors.ts` (Task 18). No urgency/triage field exists anywhere in this shape (decision recorded 2026-08-06).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3248,7 +3231,6 @@ describe('agent-intake handler', () => {
     __setGeminiCallerForTests(async () => ({
       specialty: 'cardiology',
       reason: 'Chest discomfort during exercise',
-      urgency: 'routine',
       summary: 'Patient reports exertional chest discomfort over the past week.',
     }));
 
@@ -3260,7 +3242,7 @@ describe('agent-intake handler', () => {
     });
 
     expect(result).toMatchObject({
-      intent: { specialtyLabel: 'Cardiology', reason: 'Chest discomfort during exercise', urgency: 'routine' },
+      intent: { specialtyLabel: 'Cardiology', reason: 'Chest discomfort during exercise' },
     });
     if (!('summaryCommunicationId' in result)) throw new Error('expected summaryCommunicationId');
     const communication = await medplum.readResource('Communication', result.summaryCommunicationId);
@@ -3282,7 +3264,6 @@ describe('agent-intake handler', () => {
     __setGeminiCallerForTests(async () => ({
       specialty: 'quantum flux specialist',
       reason: 'Unclear',
-      urgency: 'routine',
       summary: 'Unclear complaint.',
     }));
 
@@ -3319,13 +3300,12 @@ import { INTAKE_SYSTEM_PROMPT, buildIntakeUserPrompt } from './lib/prompts';
 interface GeminiIntakeResult {
   specialty: string;
   reason: string;
-  urgency: 'routine' | 'urgent';
   summary: string;
 }
 
 export type IntakeInput = { patientId: string; complaintText: string };
 export type IntakeResult =
-  | { intent: { specialtyCode: string; specialtyLabel: string; reason: string; urgency: 'routine' | 'urgent' }; summaryCommunicationId: string }
+  | { intent: { specialtyCode: string; specialtyLabel: string; reason: string }; summaryCommunicationId: string }
   | { needsClarification: true };
 
 type GeminiCaller = (apiKey: string, systemPrompt: string, userPrompt: string) => Promise<GeminiIntakeResult>;
@@ -3375,7 +3355,6 @@ export async function handler(medplum: MedplumClient, event: BotEvent<IntakeInpu
     resourceType: 'Communication',
     status: 'preparation',
     category: [{ coding: [{ system: 'http://example.com/agent-communication-category', code: 'ai-previsit-summary' }] }],
-    priority: geminiResult.urgency,
     reasonCode: [{ text: geminiResult.reason }],
     note: [{ text: complaintText }],
     topic: {
@@ -3392,7 +3371,6 @@ export async function handler(medplum: MedplumClient, event: BotEvent<IntakeInpu
       specialtyCode: specialty.nuccCode,
       specialtyLabel: specialty.label,
       reason: geminiResult.reason,
-      urgency: geminiResult.urgency,
     },
     summaryCommunicationId: communication.id as string,
   };
@@ -3611,7 +3589,7 @@ git commit -m "feat(bot): agent-find-doctors — previous-physician + NPPES rank
 
 ### Task 19: `src/bots/agent/lib/ensurePractitionerAndSchedule.ts`
 
-The most structurally sensitive piece in the plan — gets the `SchedulingParameters` extension shape and the two-HealthcareService `serviceType` array wrong here and every doctor silently has zero bookable time (Data Model doc's explicit warning). A correction pass confirmed exactly that failure mode against real source: a `SchedulingParameters` extension is matched to a specific HealthcareService request via a nested `service` sub-extension (`valueReference` pointing at that `HealthcareService`) — an extension with no `service` sub-extension matches nothing and is silently skipped (Medplum falls back to HealthcareService-level defaults instead of throwing), so an earlier version of this function's single, service-less extension would never actually apply. The fix: **one `SchedulingParameters` extension per HealthcareService**, each carrying its own `service` reference and `duration` (30 min for Office Visit, 15 for Urgent Visit), both sharing the same NPI-seeded weekly template and timezone.
+The most structurally sensitive piece in the plan — get the `SchedulingParameters` extension shape wrong here and every doctor silently has zero bookable time (Data Model doc's explicit warning). A correction pass confirmed exactly that failure mode against real source: a `SchedulingParameters` extension is matched to a specific HealthcareService request via a nested `service` sub-extension (`valueReference` pointing at that `HealthcareService`) — an extension with no `service` sub-extension matches nothing and is silently skipped (Medplum falls back to HealthcareService-level defaults instead of throwing), so a service-less extension would never actually apply. There is only one HealthcareService in this product — "Office Visit" — since there is no urgency/triage classification (decision recorded 2026-08-06). The fix: **one `SchedulingParameters` extension**, carrying its `service` reference and 30-minute `duration`, built from the NPI-seeded weekly template and timezone.
 
 **Files:**
 - Create: `src/bots/agent/lib/ensurePractitionerAndSchedule.ts`
@@ -3620,7 +3598,7 @@ The most structurally sensitive piece in the plan — gets the `SchedulingParame
 
 **Interfaces:**
 - Consumes: `getNppesDoctorByNpi` (Task 14).
-- Produces: `ensurePractitionerAndSchedule(medplum, npi, candidate?): Promise<{practitionerId: string; scheduleId: string; healthcareServiceIds: {routine: string; urgent: string}}>` — consumed only by `agent-ensure-doctor.ts` (Task 20).
+- Produces: `ensurePractitionerAndSchedule(medplum, npi, candidate?): Promise<{practitionerId: string; scheduleId: string; healthcareServiceId: string}>` — consumed only by `agent-ensure-doctor.ts` (Task 20).
 
 - [ ] **Step 1: Write `timezones.ts` (real, standard US state -> IANA data, not fabricated)**
 
@@ -3656,34 +3634,32 @@ import { MockClient } from '@medplum/mock';
 import { ensurePractitionerAndSchedule, __setNppesLookupForTests } from './ensurePractitionerAndSchedule';
 
 describe('ensurePractitionerAndSchedule', () => {
-  test('creates Practitioner, PractitionerRole, and a two-service Schedule for a new NPI', async () => {
+  test('creates Practitioner, PractitionerRole, and a single-service Schedule for a new NPI', async () => {
     const medplum = new MockClient();
     await medplum.createResource({ resourceType: 'HealthcareService', id: 'office-visit', name: 'Office Visit' });
-    await medplum.createResource({ resourceType: 'HealthcareService', id: 'urgent-visit', name: 'Urgent Visit' });
 
     const result = await ensurePractitionerAndSchedule(medplum, '1234567890', {
       npi: '1234567890', firstName: 'Jane', lastName: 'Doe', nuccCode: '207RC0000X', nuccDisplay: 'Cardiovascular Disease',
       address: { state: 'MA', postalCode: '02108' },
     });
 
-    expect(result.healthcareServiceIds).toStrictEqual({ routine: 'office-visit', urgent: 'urgent-visit' });
+    expect(result.healthcareServiceId).toBe('office-visit');
 
     const schedule = await medplum.readResource('Schedule', result.scheduleId);
     expect(schedule.actor?.[0].reference).toBe(`Practitioner/${result.practitionerId}`);
-    expect(schedule.serviceType).toHaveLength(2);
+    expect(schedule.serviceType).toHaveLength(1);
     for (const concept of schedule.serviceType ?? []) {
       const ref = concept.extension?.find((e: any) => e.url === 'https://medplum.com/fhir/service-type-reference');
       expect(ref?.valueReference?.reference).toMatch(/^HealthcareService\//);
     }
 
-    // Two separate SchedulingParameters extensions — one per HealthcareService,
-    // each with its own `service` sub-extension. A single service-less
-    // extension (an earlier version of this function) is silently ignored
-    // by Medplum's actual matching logic — this is what makes it apply at all.
+    // One SchedulingParameters extension, with its own `service`
+    // sub-extension. A service-less extension is silently ignored by
+    // Medplum's actual matching logic — this is what makes it apply at all.
     const schedulingParamsExtensions = (schedule.extension ?? []).filter(
       (e: any) => e.url === 'https://medplum.com/fhir/StructureDefinition/SchedulingParameters'
     );
-    expect(schedulingParamsExtensions).toHaveLength(2);
+    expect(schedulingParamsExtensions).toHaveLength(1);
 
     const officeVisitParams = schedulingParamsExtensions.find((e: any) =>
       e.extension?.some((sub: any) => sub.url === 'service' && sub.valueReference?.reference === 'HealthcareService/office-visit')
@@ -3692,12 +3668,6 @@ describe('ensurePractitionerAndSchedule', () => {
     expect(officeVisitParams?.extension?.find((e: any) => e.url === 'duration')?.valueDuration?.value).toBe(30);
     expect(officeVisitParams?.extension?.find((e: any) => e.url === 'alignmentInterval')?.valueDuration?.value).toBe(30);
     expect(officeVisitParams?.extension?.find((e: any) => e.url === 'timezone')?.valueCode).toBe('America/New_York');
-
-    const urgentVisitParams = schedulingParamsExtensions.find((e: any) =>
-      e.extension?.some((sub: any) => sub.url === 'service' && sub.valueReference?.reference === 'HealthcareService/urgent-visit')
-    );
-    expect(urgentVisitParams).toBeDefined();
-    expect(urgentVisitParams?.extension?.find((e: any) => e.url === 'duration')?.valueDuration?.value).toBe(15);
 
     const practitioner = await medplum.readResource('Practitioner', result.practitionerId);
     expect(practitioner.identifier?.[0]).toStrictEqual({ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' });
@@ -3709,7 +3679,6 @@ describe('ensurePractitionerAndSchedule', () => {
   test('is idempotent — a second call for the same NPI reuses the same resources', async () => {
     const medplum = new MockClient();
     await medplum.createResource({ resourceType: 'HealthcareService', id: 'office-visit', name: 'Office Visit' });
-    await medplum.createResource({ resourceType: 'HealthcareService', id: 'urgent-visit', name: 'Urgent Visit' });
     const candidate = { npi: '1234567890', firstName: 'Jane', lastName: 'Doe', nuccCode: '207RC0000X', nuccDisplay: 'Cardiovascular Disease', address: { state: 'MA' } };
 
     const first = await ensurePractitionerAndSchedule(medplum, '1234567890', candidate);
@@ -3722,7 +3691,6 @@ describe('ensurePractitionerAndSchedule', () => {
   test('looks up NPPES when no candidate is supplied', async () => {
     const medplum = new MockClient();
     await medplum.createResource({ resourceType: 'HealthcareService', id: 'office-visit', name: 'Office Visit' });
-    await medplum.createResource({ resourceType: 'HealthcareService', id: 'urgent-visit', name: 'Urgent Visit' });
     __setNppesLookupForTests(async () => ({
       npi: '1234567890', firstName: 'Jane', lastName: 'Doe', nuccCode: '207RC0000X', nuccDisplay: 'Cardiovascular Disease', address: { state: 'MA' },
     }));
@@ -3867,10 +3835,9 @@ export async function ensurePractitionerAndSchedule(
   medplum: MedplumClient,
   npi: string,
   candidate?: DoctorCandidate
-): Promise<{ practitionerId: string; scheduleId: string; healthcareServiceIds: { routine: string; urgent: string } }> {
+): Promise<{ practitionerId: string; scheduleId: string; healthcareServiceId: string }> {
   const officeVisit: HealthcareService = (await medplum.searchOne('HealthcareService', { name: 'Office Visit' })) as HealthcareService;
-  const urgentVisit: HealthcareService = (await medplum.searchOne('HealthcareService', { name: 'Urgent Visit' })) as HealthcareService;
-  const healthcareServiceIds = { routine: officeVisit.id as string, urgent: urgentVisit.id as string };
+  const healthcareServiceId = officeVisit.id as string;
 
   let practitioner = await medplum.searchOne('Practitioner', { identifier: `${NPI_SYSTEM}|${npi}` });
   if (!practitioner) {
@@ -3899,20 +3866,12 @@ export async function ensurePractitionerAndSchedule(
     schedule = await medplum.createResource<Schedule>({
       resourceType: 'Schedule',
       actor: [{ reference: `Practitioner/${practitionerId}` }],
-      serviceType: [serviceTypeConcept(healthcareServiceIds.routine), serviceTypeConcept(healthcareServiceIds.urgent)],
-      // TWO SchedulingParameters extensions, not one — see the function's
-      // doc comment. Multiple extensions sharing the same url is valid
-      // FHIR and exactly what Medplum's own matching logic expects here
-      // (it explicitly handles "more than one match" as an error case,
-      // implying more than one extension present-but-non-matching is normal).
-      extension: [
-        buildSchedulingParametersExtension(template, timezone, healthcareServiceIds.routine, 30),
-        buildSchedulingParametersExtension(template, timezone, healthcareServiceIds.urgent, 15),
-      ],
+      serviceType: [serviceTypeConcept(healthcareServiceId)],
+      extension: [buildSchedulingParametersExtension(template, timezone, healthcareServiceId, 30)],
     });
   }
 
-  return { practitionerId, scheduleId: schedule.id as string, healthcareServiceIds };
+  return { practitionerId, scheduleId: schedule.id as string, healthcareServiceId };
 }
 ```
 
@@ -3928,7 +3887,7 @@ Expected: PASS.
 
 ```bash
 git add src/bots/agent/lib/ensurePractitionerAndSchedule.ts src/bots/agent/lib/timezones.ts src/bots/agent/lib/ensurePractitionerAndSchedule.test.ts
-git commit -m "feat(lib): lazy Practitioner/Schedule provisioning, two-service Schedule"
+git commit -m "feat(lib): lazy Practitioner/Schedule provisioning, single-service Schedule"
 ```
 
 ---
@@ -3941,7 +3900,7 @@ git commit -m "feat(lib): lazy Practitioner/Schedule provisioning, two-service S
 
 **Interfaces:**
 - Consumes: `ensurePractitionerAndSchedule` (Task 19).
-- Produces: `handler(medplum, event: BotEvent<{npi: string; candidate?: DoctorCandidate}>): Promise<{practitionerId: string; scheduleId: string; healthcareServiceIds: {routine: string; urgent: string}}>`.
+- Produces: `handler(medplum, event: BotEvent<{npi: string; candidate?: DoctorCandidate}>): Promise<{practitionerId: string; scheduleId: string; healthcareServiceId: string}>`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3955,7 +3914,6 @@ describe('agent-ensure-doctor handler', () => {
   test('delegates straight to ensurePractitionerAndSchedule and returns its result', async () => {
     const medplum = new MockClient();
     await medplum.createResource({ resourceType: 'HealthcareService', id: 'office-visit', name: 'Office Visit' });
-    await medplum.createResource({ resourceType: 'HealthcareService', id: 'urgent-visit', name: 'Urgent Visit' });
 
     const result = await handler(medplum, {
       bot: { reference: 'Bot/123' },
@@ -3967,7 +3925,7 @@ describe('agent-ensure-doctor handler', () => {
       secrets: {},
     });
 
-    expect(result.healthcareServiceIds).toStrictEqual({ routine: 'office-visit', urgent: 'urgent-visit' });
+    expect(result.healthcareServiceId).toBe('office-visit');
     expect(result.practitionerId).toBeDefined();
     expect(result.scheduleId).toBeDefined();
   });
@@ -3991,7 +3949,7 @@ import { ensurePractitionerAndSchedule } from './lib/ensurePractitionerAndSchedu
 import type { DoctorCandidate } from './lib/ranking';
 
 export type EnsureDoctorInput = { npi: string; candidate?: DoctorCandidate };
-export type EnsureDoctorResult = { practitionerId: string; scheduleId: string; healthcareServiceIds: { routine: string; urgent: string } };
+export type EnsureDoctorResult = { practitionerId: string; scheduleId: string; healthcareServiceId: string };
 
 export async function handler(medplum: MedplumClient, event: BotEvent<EnsureDoctorInput>): Promise<EnsureDoctorResult> {
   const { npi, candidate } = event.input;
@@ -4058,11 +4016,13 @@ it, and only then calls `$book`.
    (Task 34 filters out any Appointment without a `Patient/` participant),
    and the chat relationship check (Task 22). The bot now adds the Patient
    participant itself before booking.
-5. **Appointment metadata is included before `$book`.** Reason, complaint,
-   and priority are derived from the trusted Communication and added to the
-   proposal that `$book` persists. This avoids a second non-atomic
-   Appointment write. If the remaining post-book Communication link fails,
-   it is logged rather than falsely reporting that the booking failed.
+5. **Appointment metadata is included before `$book`.** Reason and complaint
+   are derived from the trusted Communication and added to the
+   proposal that `$book` persists. There is no urgency/priority field
+   anywhere in this product (decision recorded 2026-08-06). This avoids a
+   second non-atomic Appointment write. If the remaining post-book
+   Communication link fails, it is logged rather than falsely reporting
+   that the booking failed.
 6. **The Communication update reads-and-spreads the existing resource**
    instead of constructing a bare object with only 5 fields.
    `medplum.updateResource()` is a full replacement (FHIR `PUT` semantics),
@@ -4071,7 +4031,7 @@ it, and only then calls `$book`.
    text), and `meta.tag` the moment a booking completed.
 7. **All clinical fields are server-derived.** The Bot validates that the
    preparation Communication belongs to the Patient and was created by the
-   intake flow, derives urgency/service/reason/complaint from it, validates
+   intake flow, derives service/reason/complaint from it, validates
    that the Schedule belongs to the requested Practitioner and service,
    and rejects a `$find` proposal with unexpected participants or Slot data.
 
@@ -4141,7 +4101,6 @@ describe('agent-book-appointment handler', () => {
       resourceType: 'Communication',
       status: 'preparation',
       category: [{ coding: [{ system: 'http://example.com/agent-communication-category', code: 'ai-previsit-summary' }] }],
-      priority: 'routine',
       reasonCode: [{ text: 'Chest discomfort during exercise' }],
       note: [{ text: 'My chest hurts when I run' }],
       topic: { coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] },
@@ -4160,7 +4119,6 @@ describe('agent-book-appointment handler', () => {
       description: 'Chest discomfort during exercise',
       comment: 'My chest hurts when I run',
       reasonCode: [{ text: 'Chest discomfort during exercise' }],
-      priority: 5,
     };
     // $book's real response is a BARE Bundle — no Parameters envelope.
     const bookResponseBundle = {
@@ -4276,10 +4234,7 @@ export type BookInput = {
 export type BookResult = { ok: true; appointment: Appointment } | { ok: false; reason: 'slot_taken' };
 
 const SLOT_TAKEN_MESSAGE = 'Requested time slot is not available';
-
-function urgencyToPriority(urgency: 'routine' | 'urgent'): number {
-  return urgency === 'urgent' ? 1 : 5;
-}
+const HEALTHCARE_SERVICE_ID = 'office-visit'; // the only visit type — no urgency/triage classification exists in this product (decision recorded 2026-08-06)
 
 function hasCategory(communication: Communication, code: string): boolean {
   return communication.category?.some((category) =>
@@ -4353,10 +4308,6 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
   ) {
     throw new Error('The intake Communication is not an authoritative preparation summary for this Patient');
   }
-  const urgency = summary.priority;
-  if (urgency !== 'routine' && urgency !== 'urgent') {
-    throw new Error('The intake Communication has no valid booking urgency');
-  }
   const reason = summary.reasonCode?.[0]?.text;
   const complaintText = summary.note?.[0]?.text;
   const specialtyCode = summary.topic?.coding?.find((coding) => coding.system === 'http://nucc.org/provider-taxonomy')?.code;
@@ -4377,7 +4328,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
     throw new Error('The requested Practitioner does not match the intake-selected specialty');
   }
 
-  const serviceId = urgency === 'urgent' ? 'urgent-visit' : 'office-visit';
+  const serviceId = HEALTHCARE_SERVICE_ID;
   await medplum.readResource<HealthcareService>('HealthcareService', serviceId);
   if (schedule.actor?.some((actor) => actor.reference === `Practitioner/${practitionerId}`) !== true) {
     throw new Error('The Schedule does not belong to the requested Practitioner');
@@ -4410,7 +4361,6 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
     description: reason,
     comment: complaintText,
     reasonCode: [{ text: reason }],
-    priority: urgencyToPriority(urgency),
   };
 
   let bookedAppointment: Appointment;
@@ -4804,9 +4754,11 @@ further bugs, both fixed here: `$book`'s response was (again) parsed as a
 `Parameters` envelope instead of the bare `Bundle` it actually is (same
 correction as Task 21); and the new Appointment previously copied only
 `serviceType`/`participant` from the original, silently dropping
-`description`/`comment`/`reasonCode`/`priority` and leaving the summary
+`description`/`comment`/`reasonCode` and leaving the summary
 Communication's `about` pointed at the now-cancelled original Appointment
-instead of the new one.
+instead of the new one. (There is no `priority` field to copy — no
+urgency/triage classification exists in this product, decision recorded
+2026-08-06.)
 
 **Files:**
 - Create: `src/bots/core/reschedule-appointment.ts`
@@ -4850,7 +4802,6 @@ describe('reschedule-appointment handler', () => {
       description: 'Chest discomfort during exercise',
       comment: 'My chest hurts when I run',
       reasonCode: [{ text: 'Chest discomfort during exercise' }],
-      priority: 5,
     });
     await medplum.updateResource({ ...communication, about: [{ reference: `Appointment/${appointment.id}` }] });
 
@@ -4877,7 +4828,6 @@ describe('reschedule-appointment handler', () => {
     if (!result.ok) throw new Error('expected ok:true');
     expect(result.appointment.description).toBe('Chest discomfort during exercise');
     expect(result.appointment.comment).toBe('My chest hurts when I run');
-    expect(result.appointment.priority).toBe(5);
 
     const bookCall = posted.find((p) => p.url === medplum.fhirUrl('Appointment', '$book').toString());
     const proposedAppointment = bookCall?.body.parameter[0].resource;
@@ -4995,15 +4945,15 @@ export async function handler(medplum: MedplumClient, event: BotEvent<Reschedule
   }
 
   // Copy the stated-issue metadata forward — the original's description/
-  // comment/reasonCode/priority would otherwise be silently dropped, and
+  // comment/reasonCode would otherwise be silently dropped, and
   // the new Appointment would show up on the doctor's queue with none of
-  // the context the original had.
+  // the context the original had. (No priority field — no urgency/triage
+  // classification exists in this product, decision recorded 2026-08-06.)
   const finalAppointment = await medplum.updateResource<Appointment>({
     ...bookedAppointment,
     description: original.description,
     comment: original.comment,
     reasonCode: original.reasonCode,
-    priority: original.priority,
   });
 
   // Re-link the summary Communication to the NEW Appointment. Communication:about
@@ -5298,8 +5248,8 @@ In the Medplum app's Project Admin panel, add the project secret `GEMINI_API_KEY
 
 Using a Medplum-authenticated script or the app's bot-testing UI, call each new bot once with realistic input and confirm it returns the expected shape rather than an error:
 - `agent-intake` with a real `patientId` from the Task 10 seed and a complaint string — expect `{intent: {...}, summaryCommunicationId}`.
-- `agent-ensure-doctor` with a real NPI from the seeded data — expect `{practitionerId, scheduleId, healthcareServiceIds}`.
-- A direct call using `medplum.fhirUrl('Appointment', '$find')` with that `scheduleId` and one of the `healthcareServiceIds` — expect a bare `Bundle` response containing at least one proposed `Appointment` with a `contained` Slot. Confirm that Task 19's two per-service `SchedulingParameters` extensions are honored and that their explicit 30-minute/15-minute `alignmentInterval` values produce the expected grid.
+- `agent-ensure-doctor` with a real NPI from the seeded data — expect `{practitionerId, scheduleId, healthcareServiceId}`.
+- A direct call using `medplum.fhirUrl('Appointment', '$find')` with that `scheduleId` and `healthcareServiceId` — expect a bare `Bundle` response containing at least one proposed `Appointment` with a `contained` Slot. Confirm that Task 19's `SchedulingParameters` extension is honored and that its explicit 30-minute `alignmentInterval` produces the expected grid.
 - `agent-book-appointment`, passing only `patientId`, `practitionerId`, `scheduleId`, the selected `start`/`end`, and `summaryCommunicationId` — expect `{ok: true, appointment}` and confirm its own fresh `$find` occurred before `$book`.
 - Cancel that disposable Appointment with `medplum.post(medplum.fhirUrl('Appointment', appointmentId, '$cancel'), {})` and confirm the Appointment is cancelled and its Slot is gone. This is the target-runtime check for the native `$cancel` contract.
 - `agent-patient-chat` with that same patient's NPI and a factual question — expect a grounded, non-empty answer (and confirm the relationship check added in Task 22 rejects a mismatched NPI/patient pair).
@@ -5338,7 +5288,6 @@ export interface BookingIntent {
   specialtyCode: string;
   specialtyLabel: string;
   reason: string;
-  urgency: 'routine' | 'urgent';
   complaintText: string;
 }
 
@@ -5528,9 +5477,10 @@ with practitioner, specialty, and organization. `EncounterHistoryList.tsx`
 is a new component built specifically for that requirement, alongside
 `PatientSummary` rather than replacing it. Also added: a static
 "if this is a medical emergency, call 911" line on the complaint form —
-cheap, and worth having given the urgency classification this flow does
-(Task 17) is explicitly a *scheduling* signal, not a clinical triage
-judgment, and should never be mistaken for one.
+cheap, and worth having since Task 17's intake flow does no urgency/triage
+classification at all (decision recorded 2026-08-06: this is a POC where a
+patient just wants to see a doctor, not a clinical triage system) and must
+never be mistaken for one.
 
 **Files:**
 - Create: `src/pages/agent/PatientHistoryPage.tsx`
@@ -5593,7 +5543,7 @@ export function ComplaintForm(props: ComplaintFormProps): JSX.Element {
 
 ```typescript
 // src/components/agent/IntentCard.tsx
-import { Badge, Card, Group, Text } from '@mantine/core';
+import { Card, Group, Text } from '@mantine/core';
 import type { JSX } from 'react';
 import type { BookingIntent } from '../../booking.context';
 
@@ -5602,7 +5552,6 @@ export function IntentCard({ intent }: { intent: BookingIntent }): JSX.Element {
     <Card withBorder>
       <Group justify="space-between">
         <Text fw={600}>{intent.specialtyLabel}</Text>
-        <Badge color={intent.urgency === 'urgent' ? 'red' : 'blue'}>{intent.urgency}</Badge>
       </Group>
       <Text size="sm" c="dimmed">
         {intent.reason}
@@ -6030,7 +5979,7 @@ import { BookingContext } from '../../booking.context';
 interface EnsureDoctorResult {
   practitionerId: string;
   scheduleId: string;
-  healthcareServiceIds: { routine: string; urgent: string };
+  healthcareServiceId: string;
 }
 
 export function SlotPickerPage(): JSX.Element {
@@ -6056,7 +6005,7 @@ export function SlotPickerPage(): JSX.Element {
         { npi }
       );
       setProvisioned(provisioned);
-      const healthcareServiceId = provisioned.healthcareServiceIds[booking.intent.urgency === 'urgent' ? 'urgent' : 'routine'];
+      const healthcareServiceId = provisioned.healthcareServiceId;
       const start = dayjs().add(1, 'day').startOf('day').toISOString();
       const end = dayjs().add(15, 'day').endOf('day').toISOString();
 
@@ -6769,7 +6718,7 @@ Also fixed along the way (found while implementing the above, not
 originally flagged): the real `Encounter.participant.individual.reference`
 shape is a bare `urn:uuid:`, not a conditional reference — Task 5's test
 fixture now matches the real corpus; `upload.ts`'s retry logic treated any
-structured `OperationOutcome` as non-retryable, including transient 5xxs — Task 7; `agent-patient-chat`'s sender was a hard-coded fake reference and the route's NPI was never checked against a real booking relationship — Task 22, Task 35; a stuck-loader bug in `SlotPickerPage.tsx` after a `slot_taken` response — Task 31; `require.main === module` (a CJS-only idiom) in the ESM seed CLI — Task 9; an emergency-disclaimer line on the complaint form, given the urgency classification this flow does is a scheduling signal, not a clinical judgment — Task 29.
+structured `OperationOutcome` as non-retryable, including transient 5xxs — Task 7; `agent-patient-chat`'s sender was a hard-coded fake reference and the route's NPI was never checked against a real booking relationship — Task 22, Task 35; a stuck-loader bug in `SlotPickerPage.tsx` after a `slot_taken` response — Task 31; `require.main === module` (a CJS-only idiom) in the ESM seed CLI — Task 9; an emergency-disclaimer line on the complaint form, since this flow does no urgency/triage classification at all and must never be mistaken for one — Task 29.
 
 ## Self-Review
 
@@ -6777,4 +6726,4 @@ structured `OperationOutcome` as non-retryable, including transient 5xxs — Tas
 
 **Placeholder scan** — no task defers logic to "add error handling" or similar; every code block is complete, runnable TypeScript. The one deliberately-flagged exception is Task 4's `ENCOUNTER_TYPE_SPECIALTY_MAP`, which ships with a real starting map but explicitly instructs the implementer to reconcile it against the corpus enumeration script's actual output before trusting the completeness test — this is a genuine content dependency on real data that can't be fabricated in a planning document, not a vague placeholder; the task makes the exact mechanism to resolve it (run the script, fill the gaps, let the test enforce completeness) concrete and checkable.
 
-**Type consistency** — `DoctorCandidate`/`RankedCandidate` (Task 13) flow unchanged through `nppes.ts` (14), `agent-find-doctors.ts` (18), and `ensurePractitionerAndSchedule.ts` (19). `IntentInput`/`IntentResult` shapes from `agent-intake.ts` (17) match what `PatientHistoryPage.tsx` (29) destructures (`intent.specialtyCode`, `summaryCommunicationId`). `healthcareServiceIds: {routine, urgent}` is produced once in `ensurePractitionerAndSchedule.ts` (19), passed through `agent-ensure-doctor.ts` (20) unchanged, and consumed with the same shape in `SlotPickerPage.tsx` (31). Task 31 sends exactly Task 21's minimal `BookInput` fields (`patientId`, `practitionerId`, `scheduleId`, `start`, `end`, `summaryCommunicationId`); `SlotOption` carries only display times, while the Bot obtains the authoritative Appointment and clinical metadata from Medplum. The `{ok: true, appointment} | {ok: false, reason: 'slot_taken'}` result shape is identical across `agent-book-appointment.ts` (21) and `reschedule-appointment.ts` (25), both keyed off the same confirmed `'Requested time slot is not available'` string.
+**Type consistency** — `DoctorCandidate`/`RankedCandidate` (Task 13) flow unchanged through `nppes.ts` (14), `agent-find-doctors.ts` (18), and `ensurePractitionerAndSchedule.ts` (19). `IntentInput`/`IntentResult` shapes from `agent-intake.ts` (17) match what `PatientHistoryPage.tsx` (29) destructures (`intent.specialtyCode`, `summaryCommunicationId`) — there is no `urgency` field anywhere in this shape (decision recorded 2026-08-06: no urgency/triage classification exists in this product). `healthcareServiceId` is produced once in `ensurePractitionerAndSchedule.ts` (19), passed through `agent-ensure-doctor.ts` (20) unchanged, and consumed with the same shape in `SlotPickerPage.tsx` (31). Task 31 sends exactly Task 21's minimal `BookInput` fields (`patientId`, `practitionerId`, `scheduleId`, `start`, `end`, `summaryCommunicationId`); `SlotOption` carries only display times, while the Bot obtains the authoritative Appointment and clinical metadata from Medplum. The `{ok: true, appointment} | {ok: false, reason: 'slot_taken'}` result shape is identical across `agent-book-appointment.ts` (21) and `reschedule-appointment.ts` (25), both keyed off the same confirmed `'Requested time slot is not available'` string.

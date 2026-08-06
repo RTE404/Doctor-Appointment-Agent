@@ -120,8 +120,8 @@ sequenceDiagram
     U->>UI: Enter 1-2 sentence complaint
     UI->>Intake: $execute {patientId, complaintText}
     Intake->>M: Read patient's clinical resources
-    Intake->>Gemini: One call → {specialty, reason, urgency, summary}
-    Intake->>M: Create authoritative Communication\n(topic, reasonCode, note, priority; status: preparation)
+    Intake->>Gemini: One call → {specialty, reason, summary}
+    Intake->>M: Create authoritative Communication\n(topic, reasonCode, note; status: preparation)
     Intake-->>UI: {intent, summaryCommunicationId}
 
     UI->>Find: $execute {patientId, specialtyCode}
