@@ -4,7 +4,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "lib": ["esnext"],
-    "types": ["vitest/globals"],
+    "types": ["vitest/globals", "node"],
     "jsx": "react-jsx",
     "strict": true,
     "erasableSyntaxOnly": true,
@@ -19,5 +19,5 @@
     "noEmit": true,
     "isolatedModules": true
   },
-  "include": ["src"]
+  "include": ["src", "tools"]
 }

@@ -30,3 +30,7 @@ data/core/example-bots.json
 .idea
 .DS_Store
 node_modules
+
+# Per-machine seeding upload progress (Task 9) — tracks which files have
+# already been uploaded to whichever target Medplum project; not shared state.
+.seed-manifest.json

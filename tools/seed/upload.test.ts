@@ -55,14 +55,16 @@ describe('uploadBundle', () => {
   });
 
   test('throws if any entry in a batch response failed, even though the overall HTTP call resolved — a batch response can carry per-entry failures without the request itself rejecting', async () => {
-    const bundle: Bundle = {
+    // Fixture resources are deliberately minimal (only the fields this test exercises) —
+    // cast rather than fully satisfy @medplum/fhirtypes' Condition interface.
+    const bundle = {
       resourceType: 'Bundle',
       type: 'batch',
       entry: [
         { resource: { resourceType: 'Condition', id: 'c1' }, request: { method: 'PUT', url: 'Condition/c1' } },
         { resource: { resourceType: 'Condition', id: 'c2' }, request: { method: 'PUT', url: 'Condition/c2' } },
       ],
-    };
+    } as unknown as Bundle;
     const response: Bundle = {
       resourceType: 'Bundle',
       type: 'batch-response',
@@ -78,7 +80,7 @@ describe('uploadBundle', () => {
   });
 
   test('a fully successful batch response does not throw', async () => {
-    const bundle: Bundle = { resourceType: 'Bundle', type: 'batch', entry: [{ resource: { resourceType: 'Condition', id: 'c1' }, request: { method: 'PUT', url: 'Condition/c1' } }] };
+    const bundle = { resourceType: 'Bundle', type: 'batch', entry: [{ resource: { resourceType: 'Condition', id: 'c1' }, request: { method: 'PUT', url: 'Condition/c1' } }] } as unknown as Bundle;
     const response: Bundle = { resourceType: 'Bundle', type: 'batch-response', entry: [{ response: { status: '200' } }] };
     const medplum = { executeBatch: vi.fn().mockResolvedValue(response) } as any;
 

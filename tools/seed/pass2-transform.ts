@@ -109,14 +109,17 @@ export function transformBundle(bundle: Bundle, specialtiesByStableId: Map<strin
     if (resource.resourceType === 'Practitioner') {
       const specialtyLabel = specialtiesByStableId.get(resource.id) ?? 'General Practice';
       const nuccCode = nuccCodeForLabel(specialtyLabel);
-      const practitioner = withStableIdentifier(
-        {
-          ...resource,
-          qualification: [{ code: { text: specialtyLabel } }],
-          extension: [...((resource as any).extension ?? []), { url: TIMEZONE_EXT_URL, valueCode: DEFAULT_TIMEZONE }],
-        },
-        resource.id
-      );
+      const practitionerWithQualification = {
+        ...resource,
+        qualification: [{ code: { text: specialtyLabel } }],
+        extension: [...((resource as any).extension ?? []), { url: TIMEZONE_EXT_URL, valueCode: DEFAULT_TIMEZONE }],
+      };
+      // withStableIdentifier<T extends { identifier?: Identifier[] }> constrains on a "weak type"
+      // (a single optional property); practitionerWithQualification's added qualification/extension
+      // fields share none of it, which trips TS's weak-type overlap check even though the runtime
+      // spread inside withStableIdentifier is unaffected. The result is cast to BundleEntry['resource']
+      // immediately below regardless, so the precise inferred type here isn't otherwise relied on.
+      const practitioner = withStableIdentifier(practitionerWithQualification as any, resource.id);
       outputEntries.push({ ...entry, resource: practitioner as BundleEntry['resource'], request: deterministicUpsert('Practitioner', resource.id) });
       // PractitionerRole.practitioner is already a plain, resolved
       // reference (Practitioner/{resource.id}) — no urn:uuid involved

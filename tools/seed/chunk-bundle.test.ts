@@ -5,7 +5,9 @@ import { splitForUpload, uploadPatientBundle } from './chunk-bundle';
 
 // References are already resolved to plain, real form by this point
 // (Task 6's transformBundle) — chunk-bundle.ts never sees a urn:uuid.
-const TRANSFORMED_BUNDLE: Bundle = {
+// Fixture resources are deliberately minimal (only the fields this suite exercises) —
+// cast rather than fully satisfy @medplum/fhirtypes' per-resourceType interfaces.
+const TRANSFORMED_BUNDLE = {
   resourceType: 'Bundle',
   type: 'transaction',
   entry: [
@@ -25,7 +27,7 @@ const TRANSFORMED_BUNDLE: Bundle = {
       request: { method: 'PUT', url: 'Condition/cond-1' },
     },
   ],
-};
+} as unknown as Bundle;
 
 describe('splitForUpload', () => {
   test('separates identity resources (including PractitionerRole) from clinical resources', () => {
@@ -47,7 +49,7 @@ describe('splitForUpload', () => {
       resource: { resourceType: 'Condition' as const, id: `cond-${i}`, subject: { reference: 'Patient/patient-1' } },
       request: { method: 'PUT' as const, url: `Condition/cond-${i}` },
     }));
-    const bigBundle: Bundle = { resourceType: 'Bundle', type: 'transaction', entry: [TRANSFORMED_BUNDLE.entry![0], ...manyEntries] };
+    const bigBundle = { resourceType: 'Bundle', type: 'transaction', entry: [TRANSFORMED_BUNDLE.entry![0], ...manyEntries] } as unknown as Bundle;
 
     const { clinicalChunks } = splitForUpload(bigBundle);
 
@@ -56,11 +58,11 @@ describe('splitForUpload', () => {
   });
 
   test("'full' mode's extra resource types (outside the 7-type/PractitionerRole allowlists) land in a third chunk group, not dropped", () => {
-    const bundleWithExtra: Bundle = {
+    const bundleWithExtra = {
       resourceType: 'Bundle',
       type: 'transaction',
       entry: [...TRANSFORMED_BUNDLE.entry!, { resource: { resourceType: 'Observation', id: 'obs-1' }, request: { method: 'PUT', url: 'Observation/obs-1' } }],
-    };
+    } as unknown as Bundle;
 
     const { otherChunks } = splitForUpload(bundleWithExtra);
 

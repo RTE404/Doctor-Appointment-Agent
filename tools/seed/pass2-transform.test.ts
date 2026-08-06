@@ -5,7 +5,9 @@ import { transformBundle } from './pass2-transform';
 
 describe('transformBundle', () => {
   test("filters to the 7 app-read resource types in 'slim' mode", () => {
-    const bundle: Bundle = {
+    // Fixture resources are deliberately minimal (only the fields this suite exercises) —
+    // cast rather than fully satisfy @medplum/fhirtypes' per-resourceType interfaces.
+    const bundle = {
       resourceType: 'Bundle',
       type: 'transaction',
       entry: [
@@ -13,7 +15,7 @@ describe('transformBundle', () => {
         { resource: { resourceType: 'Observation', id: 'o1' } },
         { resource: { resourceType: 'Claim', id: 'c1' } },
       ],
-    };
+    } as unknown as Bundle;
 
     const result = transformBundle(bundle, new Map(), 'slim');
 
@@ -22,14 +24,14 @@ describe('transformBundle', () => {
   });
 
   test("keeps every resource type in 'full' mode", () => {
-    const bundle: Bundle = {
+    const bundle = {
       resourceType: 'Bundle',
       type: 'transaction',
       entry: [
         { resource: { resourceType: 'Patient', id: 'p1' } },
         { resource: { resourceType: 'Observation', id: 'o1' } },
       ],
-    };
+    } as unknown as Bundle;
 
     const result = transformBundle(bundle, new Map(), 'full');
 
@@ -74,7 +76,7 @@ describe('transformBundle', () => {
   });
 
   test('resolves clinical-to-clinical references (Condition.encounter, MedicationRequest.encounter/requester/reasonReference) — the real corpus has 26,268 of these', () => {
-    const bundle: Bundle = {
+    const bundle = {
       resourceType: 'Bundle',
       type: 'transaction',
       entry: [
@@ -105,7 +107,7 @@ describe('transformBundle', () => {
           request: { method: 'POST', url: 'MedicationRequest' },
         },
       ],
-    };
+    } as unknown as Bundle;
 
     const result = transformBundle(bundle, new Map(), 'slim');
 
