@@ -131,26 +131,25 @@ them.
 
 | Bot | Trigger | Does |
 |---|---|---|
-| `agent-intake` | `$execute`, once per complaint submission | Reads the patient's Condition/MedicationRequest/AllergyIntolerance/Encounter. One Gemini call (temp 0, JSON mode) returns `{specialty, reason, urgency, summary}` in one shot. Persists the result immediately as an authoritative `Communication`: `topic` is the normalized NUCC specialty, `reasonCode` is the concise reason, `note` preserves the original complaint, and `priority` stores urgency. The resource remains `preparation` with no recipient until booking. If the specialty cannot be mapped confidently, the bot asks for clarification instead of guessing. |
+| `agent-intake` | `$execute`, once per complaint submission | Reads the patient's Condition/MedicationRequest/AllergyIntolerance/Encounter. One Gemini call (temp 0, JSON mode) returns `{specialty, reason, summary}` in one shot — no urgency/triage classification (decision recorded 2026-08-06: this is a POC where a patient just wants to see a doctor, not a clinical triage system). Persists the result immediately as an authoritative `Communication`: `topic` is the normalized NUCC specialty, `reasonCode` is the concise reason, `note` preserves the original complaint. The resource remains `preparation` with no recipient until booking. If the specialty cannot be mapped confidently, the bot asks for clarification instead of guessing. |
 | `agent-find-doctors` | `$execute` | Previous-physician path: `Encounter→Practitioner` for this patient, filtered by an **exact** `PractitionerRole.specialty` match (confirmed real search parameter) against the LLM-inferred specialty. **Ranking rule**: a previous physician is only ever surfaced when that exact match succeeds — if it does, shown first, ahead of every NPPES candidate, regardless of distance (**tie-break**: most-recent `Encounter` wins if multiple previous practitioners match). No exact match → no previous-physician result at all (not a fuzzy/partial inclusion), list is purely NPPES candidates. New-doctor path: NPPES search via the ported specialty→taxonomy table, ranked by distance (§8) among themselves. Returns top ~10 with a `source: previous\|nppes` badge. Writes nothing — candidates aren't persisted until one is booked, and it never provisions a Practitioner/Schedule itself (that's `agent-ensure-doctor`, below). |
-| `agent-ensure-doctor` | `$execute`, once per slot-picker page load | Thin wrapper around `ensurePractitionerAndSchedule` (below) — exists as its own bot because provisioning may need an NPPES lookup (no CORS, must run bot-side). Returns `{practitionerId, scheduleId, healthcareServiceIds: {routine, urgent}}`; the UI then calls `$find` directly with the id matching the patient's `urgency`. This is the only caller of `ensurePractitionerAndSchedule` — not `agent-find-doctors`, and never the UI directly. |
-| *(shared lib, not a bot)* `ensurePractitionerAndSchedule` | called only by `agent-ensure-doctor` | Searches by NPI and reuses existing resources; otherwise creates the `Practitioner`, matching `PractitionerRole`, and `Schedule`. The Schedule uses an NPI-seeded deterministic weekly template and carries two service-specific `SchedulingParameters` extensions. The search-before-create approach is idempotent in ordinary use; a concurrent first request for the same previously unseen NPI can still race and is an accepted POC limitation. No independent trigger — it does not get a separate Bot artifact. |
-| `agent-book-appointment` | `$execute` | Accepts only `{patientId, practitionerId, scheduleId, start, end, summaryCommunicationId}`. Re-reads and validates the Patient, Practitioner, Schedule, PractitionerRole, and intake Communication; derives specialty, reason, complaint, urgency, and service from those server-side resources; re-runs `$find`; and chooses the exact fresh proposal whose contained Slot matches the requested time. It adds the Patient participant and clinical display metadata before sending that exact proposal to `$book`. On success it read-and-spread links the summary Communication. A booking conflict becomes `{ok: false, reason: 'slot_taken'}`; unrelated pre-book failures re-throw, while a post-book Communication-link failure is logged so a committed booking is not reported as failed. |
+| `agent-ensure-doctor` | `$execute`, once per slot-picker page load | Thin wrapper around `ensurePractitionerAndSchedule` (below) — exists as its own bot because provisioning may need an NPPES lookup (no CORS, must run bot-side). Returns `{practitionerId, scheduleId, healthcareServiceId}`; the UI then calls `$find` directly with that id — there is only one visit type, so no urgency-based selection is needed. This is the only caller of `ensurePractitionerAndSchedule` — not `agent-find-doctors`, and never the UI directly. |
+| *(shared lib, not a bot)* `ensurePractitionerAndSchedule` | called only by `agent-ensure-doctor` | Searches by NPI and reuses existing resources; otherwise creates the `Practitioner`, matching `PractitionerRole`, and `Schedule`. The Schedule uses an NPI-seeded deterministic weekly template and carries a single `SchedulingParameters` extension for the one Office Visit service. The search-before-create approach is idempotent in ordinary use; a concurrent first request for the same previously unseen NPI can still race and is an accepted POC limitation. No independent trigger — it does not get a separate Bot artifact. |
+| `agent-book-appointment` | `$execute` | Accepts only `{patientId, practitionerId, scheduleId, start, end, summaryCommunicationId}`. Re-reads and validates the Patient, Practitioner, Schedule, PractitionerRole, and intake Communication; derives specialty, reason, and complaint from those server-side resources; re-runs `$find`; and chooses the exact fresh proposal whose contained Slot matches the requested time. It adds the Patient participant and clinical display metadata before sending that exact proposal to `$book`. On success it read-and-spread links the summary Communication. A booking conflict becomes `{ok: false, reason: 'slot_taken'}`; unrelated pre-book failures re-throw, while a post-book Communication-link failure is logged so a committed booking is not reported as failed. |
 | `agent-patient-chat` | `$execute`, once per chat message | Accepts the doctor's NPI, resolves the real Practitioner, and verifies a booking relationship to the Patient before answering. Re-reads the Patient/Condition/MedicationRequest/AllergyIntolerance/Encounter **live, every call**, via the same shared `loadPatientClinicalContext` used by `agent-intake`. One Gemini call, single-turn, no tools. Persists the verified Practitioner-authored question and Device-authored answer as threaded `Communication` resources. |
 | Native `$cancel` / `reschedule-appointment` *(core, new)* | direct provider UI action (not exposed in the patient agent flow) | Cancellation calls Medplum's atomic instance-level `$cancel` directly. Rescheduling books the replacement through `$book`, preserves metadata and the summary link, then cancels the original through native `$cancel`. There is no custom cancellation or hold-expiry Bot. |
 
 ## 7. Scheduling mechanics
 
-`ensurePractitionerAndSchedule` builds a `Schedule` with exactly two
-`SchedulingParameters` extensions, one for Office Visit and one for Urgent
-Visit (confirmed exact URL:
+`ensurePractitionerAndSchedule` builds a `Schedule` with exactly one
+`SchedulingParameters` extension, for the single Office Visit service
+(confirmed exact URL:
 `https://medplum.com/fhir/StructureDefinition/SchedulingParameters`).
-Each extension has a `service` reference to its HealthcareService plus its
+The extension has a `service` reference to the HealthcareService plus its
 own `duration`, matching `alignmentInterval`, `timezone`, and `availability`.
 The service reference is required: a Schedule-level group without one does
-not match either requested service. Explicit alignment intervals avoid the
-otherwise-default hourly grid and produce 30-minute routine starts and
-15-minute urgent starts.
+not match the requested service. An explicit alignment interval avoids the
+otherwise-default hourly grid and produces 30-minute starts.
 **Gotcha worth building correctly the first time**: `availableTime`'s
 `daysOfWeek` sub-extension repeats once per day — a doctor working
 Mon/Wed/Fri needs three separate `{url: 'daysOfWeek', valueCode: ...}`
@@ -161,7 +160,7 @@ rather than an obvious error.
 `$find` additionally requires (confirmed directly in `find.ts`'s operation
 definition): exactly one `service-type-reference` (which must be present in
 the target `Schedule.serviceType` array — a Schedule here always lists
-both Office Visit and Urgent Visit), one-or-more `schedule` references, a
+the single Office Visit service), one-or-more `schedule` references, a
 `start`/`end` range capped at 31 days, and — per
 `getSchedulingParametersGroup` — every
 `Schedule` must have exactly one `actor` and a resolvable timezone (from
@@ -370,6 +369,9 @@ prompt (extended with the `summary` field).
   pass could not confirm either way) — worth a direct check once real
   Medplum access is available.
 
-(The second `HealthcareService` for `urgency: urgent` is no longer an open
-item — both Office Visit and Urgent Visit are settled, load-bearing parts
-of the Schedule/booking design; see §6, §7, and the Data Model doc.)
+(There is only one `HealthcareService`, "Office Visit." Per the product
+decision recorded 2026-08-06, this app performs no urgency/triage
+classification — it's a POC where a patient just wants to see a doctor, not
+a clinical triage system. The previously-planned second "Urgent Visit"
+HealthcareService and all routine/urgent branching have been removed from
+the design; see §6, §7, and the Data Model doc.)

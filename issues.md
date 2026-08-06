@@ -1,10 +1,30 @@
 # Doctor Appointment Agent — Definitive Re-scan (Round 3)
 
+> ## ROUND 4 RE-VERIFICATION — 2026-08-06 (superseding notice)
+>
+> Every finding in this file was independently re-checked against the actual
+> Medplum source and the current state of
+> `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md` at
+> commit `f77666d` (`main`). Two commits landed after this file was written —
+> `3c9ed87` ("docs: synchronize design set with implementation plan") and
+> `f77666d` ("fix: correct 4 confirmed defects from the round-3/round-4
+> re-scan") — and fixed most of what is flagged below **without updating this
+> file**. A status tag (`FIXED`, `STILL OPEN`, `PARTIALLY FIXED`, or `DOES NOT
+> HOLD`) has been added under each finding's heading recording what was found
+> on re-check. The original round-3 body text below is left intact as the
+> historical record of what was true when it was written.
+>
+> **Round 4 headline result: all 5 P0 blockers are now fixed.** The original
+> verdict immediately below ("NOT CLEARED... not safe to implement") no
+> longer applies to the P0 tier. It is retained for historical record only —
+> see the **Round 4 Re-verification Summary** near the end of this file for
+> the current bottom line and the revised closure order.
+
 **Re-scan date:** 2026-08-05
 
 **Repository commit reviewed:** `7c78b05` (`main`, 6 commits ahead of `origin/main`)
 
-**Verdict:** **NOT CLEARED — keep this file. The current plan is not safe to implement as written.**
+**Verdict (round 3, historical — see Round 4 banner above):** **NOT CLEARED — keep this file. The current plan is not safe to implement as written.**
 
 The latest correction pass did fix several findings from the previous report.
 It did not fix everything, and it introduced or exposed new release blockers.
@@ -65,6 +85,16 @@ implementation cannot produce it reliably yet.
 
 ### P0-01 — the seed reference model is based on a false Medplum ID assumption
 
+> **Round 4 status: FIXED (commit `3c9ed87`).** Task 6 was rewritten to stop
+> assuming POST preserves a client-supplied id. It now writes every retained
+> and bootstrap resource via deterministic, unconditional `PUT
+> ResourceType/{stableId}` and attaches `identifier` only for audit/search —
+> "no POST id preservation or conditional-create lookup is assumed" (plan
+> correction-pass note, current file). The Medplum-side finding
+> (`resolveCreateIdentity()` regenerates ids on POST) is still correct and
+> version-stable; it's just no longer relevant because the plan no longer
+> relies on POST for identity-bearing creates.
+
 Task 6 repeatedly states that a client-supplied `resource.id` is preserved for
 a POST inside either a batch or transaction Bundle (plan lines 906–917,
 1,150–1,156, 1,635–1,639, and 1,704–1,708). It therefore rewrites source URNs
@@ -114,6 +144,13 @@ IDs from source IDs when using POST.
 
 ### P0-02 — all planned `$book` and `$cancel` POSTs target the wrong URL
 
+> **Round 4 status: FIXED (commit `3c9ed87`).** A whole-file check for bare
+> `medplum.post('...')` strings turns up exactly one hit today, and it's the
+> unrelated (and correct) admin bot-creation endpoint. Every `$book`/`$cancel`
+> call in Tasks 21, 24, and 25 now uses `medplum.fhirUrl('Appointment',
+> '$book')` / `medplum.fhirUrl('Appointment', id, '$cancel')`, and the tests
+> assert against the resolved URL rather than a stub string.
+
 The plan calls:
 
 - `medplum.post('Appointment/$book', ...)` in Tasks 21 and 25 (lines 4,247
@@ -152,7 +189,16 @@ will fail before response parsing matters.
 test that asserts the fully resolved request URL rather than only matching a
 stub string.
 
-### P0-03 — the “full 983-bundle slim run” uploads only 50 Bundles
+### P0-03 — the "full 983-bundle slim run" uploads only 50 Bundles
+
+> **Round 4 status: FIXED (commit `f77666d`).** `--limit`/`--all` were
+> decoupled from `--slim`/`--full` — a new `--all` flag clears the limit, and
+> `--slim`/`--full` only affect transform mode now. Task 36's documented
+> command is now `npx tsx tools/seed/index.ts --slim --all`, which does
+> select all 983 files, with an explicit inline note that `--slim` alone
+> would still silently cap at 50. (The literal sentence "`--slim` alone
+> selects 50 files" is still true in isolation — it's just no longer the
+> command the plan instructs anyone to run.)
 
 `parseCliArgs()` initializes `limit: 50` (line 1,954). `--full` clears that
 limit, but `--slim` only changes `mode` and leaves the limit at 50 (lines
@@ -175,6 +221,12 @@ explicit development limit. Reject mutually contradictory flags and test Task
 36's exact argument vector.
 
 ### P0-04 — the seed CLI still crashes under the planned ESM configuration
+
+> **Round 4 status: FIXED (commit `f77666d`).** `specialty-resolver.ts` now
+> defines `const __dirname = dirname(fileURLToPath(import.meta.url));` before
+> its import-time CSV read. A full-file grep for `__dirname` today shows
+> every use site preceded by the same ESM-safe shim in its code block; none
+> of the five originally-cited bare occurrences remain bare.
 
 The fork's `package.json` sets `"type": "module"`. Task 9 correctly defines
 `__dirname` in `index.ts`, but `index.ts` imports `pass1-scan.ts`, which imports
@@ -199,6 +251,14 @@ module and use an ESM-safe fixture-root helper in tests. Add an actual
 `npx tsx tools/seed/index.ts --dry-run --limit 1` process-level smoke test.
 
 ### P0-05 — the direct Bot deployment command is not runnable in PowerShell
+
+> **Round 4 status: FIXED (commit `f77666d`).** Task 26 no longer embeds
+> source in a shell string. It's replaced by a checked-in
+> `tools/deploy-bots-direct.ts` that imports `dotenv/config` itself, validates
+> the three Medplum env vars are set, and uses plain unescaped `$bot-`/
+> `$deploy` string literals since it's real TypeScript, not a PowerShell
+> string. The run command (`npx tsx tools/deploy-bots-direct.ts`) is
+> identical in Bash and PowerShell.
 
 Task 26 wraps a long `tsx -e` program in a PowerShell double-quoted string and
 tries to protect placeholder dollars with backslashes:
@@ -235,6 +295,24 @@ one invocation per Bot.
 
 ### P1-01 — booking still trusts a browser-authored clinical/scheduling object
 
+> **Round 4 status: PARTIALLY FIXED (commit `3c9ed87`).** The core premise no
+> longer holds — `agent-book-appointment.ts`'s `BookInput` is now plain
+> identifiers only (`patientId, practitionerId, scheduleId, start, end,
+> summaryCommunicationId`), explicitly "not trusted clinical content." The
+> handler now re-reads and verifies the Patient/Practitioner/Schedule/
+> Communication server-side, validates the summary Communication belongs to
+> that Patient and has `preparation` status, validates the Practitioner's
+> specialty and the Schedule's ownership/service, re-runs `$find` itself, and
+> calls `validateProposal()`, which throws on an existing/duplicate Patient
+> participant or a mismatched Slot/Schedule/Practitioner. `urgency` is now
+> validated to be exactly `routine`/`urgent`. **What still survives:**
+> complaint/reason length is only checked for presence, not bounded, and the
+> post-`$book` Communication-link write is still a separate step whose
+> failure is caught, logged, and swallowed with no `metadataPending` signal —
+> narrower than originally described (metadata like description/reasonCode/
+> priority is now baked into the booking call itself, only the Communication
+> re-link is still a silent-failure risk).
+
 The Patient participant fix is necessary but insufficient. Task 21 blindly
 appends `Patient/${patientId}` to the browser-supplied proposal. It does not:
 
@@ -258,6 +336,13 @@ the fields the queue depends on.
 
 ### P1-02 — rescheduling can create double bookings and inconsistent summaries
 
+> **Round 4 status: STILL OPEN.** Re-verified directly against the current
+> `reschedule-appointment.ts`: the same 4-step sequence (book new → copy
+> metadata → move summary → cancel old) runs with no try/catch or
+> compensation logic across steps 2–4, and the summary search is still an
+> unpaginated `searchResources()` filtered in memory. Tests still cover only
+> full success and a `$book` slot-conflict rejection.
+
 Task 25 performs four independent state changes:
 
 1. book the new Appointment;
@@ -276,6 +361,12 @@ The summary search is unpaginated and then filtered in memory, so it can also
 miss the correct Communication for patients with many summaries.
 
 ### P1-03 — Schedule provisioning still reuses invalid Schedules and assigns wrong timezones
+
+> **Round 4 status: STILL OPEN.** Re-verified: an existing Schedule is still
+> returned as-is with no repair of services/alignment/timezone.
+> `SlotPickerPage.tsx` still calls the ensure-doctor bot with only `{ npi }` —
+> no candidate — so `timezoneForState(undefined)` still falls back to
+> `America/New_York` for a previously-seeded Practitioner without a Schedule.
 
 The per-service `SchedulingParameters` and explicit alignment intervals are
 now correct improvements. Remaining problems:
@@ -296,6 +387,14 @@ The Round 2 response explicitly says the bare-Schedule repair was left open.
 
 ### P1-04 — blocking availability can miss overlaps and orphan busy Slots
 
+> **Round 4 status: STILL OPEN.** Re-verified: `block-availability.ts`'s only
+> change is an `actor=` filter added to the existing `date=lt.../date=ge...`
+> range query. FHIR's `date` search parameter still indexes only
+> `Appointment.start`, so an appointment starting before the block and ending
+> inside it is still missed. Still batch-status-update instead of native
+> `$cancel` (inconsistent with Task 24, which does use native `$cancel`), and
+> the booked Slot is still left behind as orphaned/busy.
+
 Task 2 only adds Practitioner actor scoping to the retained
 `block-availability.ts`. The bot still:
 
@@ -313,6 +412,14 @@ elsewhere.
 
 ### P1-05 — specialty inference is still deliberately incomplete
 
+> **Round 4 status: STILL OPEN.** Re-verified: `ENCOUNTER_TYPE_SPECIALTY_MAP`
+> still ships exactly 21 entries with an explicit "fill in the rest" note to
+> the implementer. The tier-1 JSDoc still claims linked `Condition.code.text`
+> is used, but `pass1-scan.ts` still never dereferences a Condition — a
+> confirmed doc/code contradiction. File selection is still
+> `readdirSync()`-based with no `.sort()`, feeding an unreproducible,
+> iteration-order-dependent majority vote.
+
 - The corpus has 49 distinct `Encounter.type[].text` values. Task 4 ships 21
   starter mappings and tells the implementer to fill the remaining 28 before
   proceeding. This is an explicit unresolved content task, not “complete,
@@ -328,6 +435,12 @@ elsewhere.
   distinction is documented but not consistently communicated in the UI.
 
 ### P1-06 — NPPES candidates are not verified as the requested, active provider type
+
+> **Round 4 status: STILL OPEN.** Re-verified against current `nppes.ts`:
+> `mapResult()` still picks `taxonomies.find(t => t.primary) ?? taxonomies[0]`
+> regardless of which taxonomy matched the search term, still has no
+> post-filter by requested NUCC code, no NPI digit/length validation, and
+> `nppesFetch` is still a bare `fetch()` with no timeout/retry/429 handling.
 
 State normalization and fallback are fixed. The mapper still chooses the
 result's **primary** taxonomy rather than the taxonomy that satisfied the
@@ -347,6 +460,24 @@ Source: [official NPPES API help](https://npiregistry.cms.hhs.gov/api-page).
 
 ### P1-07 — AI urgency and emergency behavior remain an unresolved clinical decision
 
+> **Round 5 status (2026-08-06): RESOLVED BY PRODUCT DECISION — the first
+> horn of this finding's own recommended fork.** The team decided: no
+> urgency/triage classification at all. This is a POC where a patient just
+> wants to see a doctor — not a clinical triage system, no labels. The
+> `routine`/`urgent` field has been removed everywhere: `INTAKE_SYSTEM_PROMPT`
+> no longer asks the model to classify it, `IntakeResult`/`BookingIntent`
+> carry no `urgency` field, `Communication.priority`/`Appointment.priority`
+> were dropped, and the second "Urgent Visit" HealthcareService (and its
+> 15-minute duration / second `SchedulingParameters` extension) was removed
+> — there is now exactly one visit type. The static "if this is a medical
+> emergency, call 911" line on the complaint form is retained (it costs
+> nothing and needs no classification to justify it). Verified across
+> `docs/superpowers/plans/2026-08-04-medplum-native-implementation.md` and
+> the Data Model/Design/LLD/HLD/Specs docs — no `urgency`/`priority`/
+> `routine`/`urgent` references remain outside this historical record.
+> The round-3 text below describes the state *before* this decision and is
+> kept for context only.
+
 The product says the AI performs no clinical judgment, but the intake model
 classifies `routine` vs `urgent`, and that output changes appointment duration.
 The test fixture treats exertional chest discomfort as routine. A static
@@ -359,6 +490,14 @@ rules, escalation behavior, validation, adversarial tests, and appropriate
 governance.
 
 ### P1-08 — Gemini integration lacks runtime contracts, safety controls, and lifecycle handling
+
+> **Round 4 status: STILL OPEN.** Re-verified: both callers are still plain
+> `fetch()` with no `AbortController`/timeout/retry-backoff; the API-key
+> secret is still cast with no existence/non-empty check; intake still does a
+> bare `JSON.parse(...) as GeminiIntakeResult` with zero schema validation;
+> chat still relies solely on a static phrase blacklist and never loads prior
+> thread turns; `'gemini-2.5-flash-lite'` is still a hardcoded literal in
+> three separate places with no central config or deployment gate.
 
 Both Gemini callers lack explicit timeouts, cancellation, retry/backoff,
 input/output limits, and secret validation. Intake performs `JSON.parse(...) as
@@ -383,7 +522,17 @@ Sources: [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecation
 [Gemini API terms](https://ai.google.dev/gemini-api/terms),
 [Gemini pricing/data-use table](https://ai.google.dev/gemini-api/docs/pricing).
 
-### P1-09 — “full patient record” and “every patient ever” remain false under hard caps
+### P1-09 — "full patient record" and "every patient ever" remain false under hard caps
+
+> **Round 4 status: STILL OPEN, one wording nuance.** Re-verified: the caps
+> are all still in place (Conditions/MedicationRequests/Allergies/Encounters
+> at 50, previous-physician search at 200, patient picker/history at 50,
+> PractitionerRole and doctor-queue Appointment/Communication searches still
+> fully unpaginated with no status filter). One nuance: the exact phrase
+> "full patient record" does not appear verbatim anywhere in the docs — the
+> real product claim is `Doctor_Appointment_Agent_Specs.md` FR-11, "every
+> patient who has ever booked with them," which this finding's substance
+> still accurately contradicts.
 
 The plan still limits Conditions, MedicationRequests, Allergies, and Encounters
 to 50; previous-physician search is limited to 200; patient picker/history are
@@ -402,6 +551,14 @@ entered-in-error, future, and historical appointments.
 
 ### P1-10 — authorization remains a demo display filter, with additional ID-binding gaps
 
+> **Round 4 status: STILL OPEN.** Re-verified: `agent-ensure-doctor.ts` still
+> takes any NPI with zero relationship check; the chat relationship check is
+> still a bare `searchOne('Appointment', {actor, patient})` with no `status`
+> filter, so a cancelled Appointment still authorizes chat forever;
+> `threadId` is still spliced into `partOf` with no verification it belongs
+> to the same patient/practitioner pair; `PatientAgentChatPage.tsx` still
+> takes `npi`/`patientId` straight from the raw URL.
+
 Any broad project user can type any NPI or patient URL. The relationship check
 accepts an Appointment of any status, so a cancelled booking can authorize chat
 forever. Caller-supplied `threadId` is not verified to be a Communication for
@@ -412,6 +569,15 @@ This can be acceptable only in an access-restricted environment that is
 visibly labelled synthetic/demo. It is not a clinical authorization model.
 
 ### P1-11 — frontend state, recovery, and accessibility remain incomplete
+
+> **Round 4 status: STILL OPEN.** Re-verified: `booking.context.ts` is still
+> pure in-memory `useState`/Context with no persistence; `chosenCandidate` is
+> still written once and never read again anywhere, and the ensure-doctor
+> bot call still sends only `{ npi }`. `PatientPickerPage.tsx` and
+> `BookingConfirmationPage.tsx` still `.catch(console.error)` on read
+> failures, leaving the confirmation page spinning forever. Tasks 27–35 still
+> contain zero `Test:`/`vitest`/`@testing-library` references, unlike every
+> backend task.
 
 - Booking intent/candidate/summary state lives only in React context; refresh,
   deep links, new tabs, and back/forward navigation lose the flow.
@@ -428,6 +594,15 @@ visibly labelled synthetic/demo. It is not a clinical authorization model.
 
 ### P1-12 — full mode is exposed but is not a valid or idempotent uploader
 
+> **Round 4 status: FIXED (commit `3c9ed87`), same root cause as P0-01.**
+> Task 6 no longer uses `identifier=...` conditional create as the identity
+> mechanism for any resource type, full-mode included.
+> `deterministicUpsert()` now does an unconditional `PUT
+> ResourceType/{stableId}` for every retained/bootstrap resource regardless
+> of type; `identifier` is attached for audit/search only. The specific
+> failure mode described here (unsupported search params, non-idempotent
+> conditional-create) no longer applies to the current mechanism.
+
 Task 6 applies `withStableIdentifier()` to every resource type in full mode and
 uses `identifier=...` conditional creates universally. Not every FHIR resource
 allows an `identifier` field or an `identifier` search parameter. Resources
@@ -442,6 +617,14 @@ test of that mode.
 
 ### P1-13 — Medplum version compatibility is still an explicit deployment gate
 
+> **Round 4 status: FIXED.** The plan now pins `5.1.27` everywhere (tech
+> stack line, Global Constraints, Task 1), and `medplum/package.json` /
+> `medplum/packages/core/package.json` both report `"version": "5.1.27"` —
+> the pinned version now matches the vendored local source exactly. The
+> "target server version" gate is still explicitly acknowledged (not silently
+> ignored) via Task 10/26 live preflights, which is the correct posture for
+> what remains an inherently environment-dependent fact.
+
 The fork pins Medplum packages at `5.0.12`; the local source used for most
 scheduling validation is `5.1.27`; the target server version is unspecified.
 The critical POST-ID behavior was rechecked and is the same in tag `v5.0.12`,
@@ -450,6 +633,23 @@ extensions, client types, and server deployment still need verification
 against the exact target version. Round 2 explicitly left this open.
 
 ### P1-14 — canonical documentation is still stale and now self-contradictory
+
+> **Round 4 status: DOES NOT HOLD against the current file — all five
+> sub-claims fail re-verification.** (a) Global Constraint line 20 already
+> says `$find`/`$book` *responses* are bare Bundles and only the `$book`
+> *request* is a Parameters resource — this already agrees with Tasks
+> 21/25/31, no contradiction found. (b) The cited line 5,116 now contains
+> unrelated content; Task 26's actual live-`$find` checklist item already
+> asserts Task 19 sets `alignmentInterval`. (c) Task 9 and Task 36 agree with
+> each other — both state the default is 50 and `--all` is required to
+> select everything. (d) the Self-Review does claim every code block is
+> complete/runnable, but in the same sentence explicitly names and reconciles
+> the Task 4 specialty-table exception rather than contradicting it. (e) both
+> `Issues_Audit_Response.md` and `Issues_Audit_Response_Round2.md` now open
+> with an identical "archived audit record, superseded 2026-08-05" banner.
+> This section appears to have been written against a pre-sync revision of
+> the plan and should not be relied on; retained here only as historical
+> record of a since-resolved state.
 
 The seven banners are a useful precedence rule, but they do not reconcile the
 documents. The latest implementation plan itself now contains contradictions:
@@ -476,6 +676,21 @@ the stale bodies/audit completion claims as historical.
 
 ### P2-01 — tests still encode the implementation's assumptions
 
+> **Round 4 status: PARTIALLY FIXED.** Two sub-claims are now stale because
+> the bugs they tested for are gone: "resolved FHIR operation URLs (mocks
+> accept the wrong strings)" is stale — tests now assert against
+> `medplum.fhirUrl(...).toString()`, matching the P0-02 fix. "Server-assigned
+> IDs for POST Bundle entries" is stale — there's no POST-id assumption left
+> to test, per the P0-01 fix. "Task 36's exact CLI arguments selecting 983
+> files" is now unit-tested (`parseCliArgs(['--slim','--all'])`). Every other
+> item in the list below remains a genuine, confirmed gap — referential
+> integrity after a live upload, ESM `main()` execution, duplicate-participant
+> booking tampering, post-book metadata recovery, reschedule failures in
+> steps 2–4, block interval/Slot release, batch entry-count mismatch (a real
+> gap: `assertNoFailedEntries` only iterates `response.entry`, so *missing*
+> entries vs. the request are never caught), the 49 specialty mappings,
+> pagination, adversarial model responses, and live PowerShell Bot execution.
+
 Missing or misleading coverage includes:
 
 - server-assigned IDs for POST Bundle entries at pinned version `5.0.12`;
@@ -496,6 +711,15 @@ Missing or misleading coverage includes:
 
 ### P2-02 — retry/error handling remains brittle
 
+> **Round 4 status: STILL OPEN, confirmed exactly.** `assertNoFailedEntries`
+> still throws a plain `Error` with no `.outcome`; `isTransient()` still
+> treats anything without `.outcome` as retryable, so a deterministic
+> per-entry validation failure is still retried up to `MAX_RETRIES = 3` times
+> with no backoff/jitter/Retry-After. Slot-race classification is still one
+> exact string match (`'Requested time slot is not available'`), duplicated
+> in both booking and reschedule bots. Gemini/NPPES still have no timeout or
+> cancellation policy.
+
 - Batch validation errors are converted to plain `Error`; `isTransient()`
   treats any error without `.outcome` as retryable, so deterministic entry
   failures are retried three times.
@@ -506,6 +730,17 @@ Missing or misleading coverage includes:
 - Error messages do not consistently carry source file/resource/request IDs.
 
 ### P2-03 — CLI and manifest semantics are unsafe even after the 50-file blocker
+
+> **Round 4 status: MOSTLY OPEN, one clause now stale.** Stale: "`--full`/
+> `--slim` order changes both mode and limit" — the P0-03 fix deliberately
+> decoupled `--limit`/`--all` from `--slim`/`--full`, so order no longer
+> affects `limit` (mode is still order-dependent). Still open: missing/`NaN`/
+> fractional/zero/negative `--limit` values are still accepted with no
+> validation; unknown flags are still silently ignored; file order still has
+> no explicit `.sort()`; the manifest is still keyed only by absolute path
+> (no target/mode/digest); writes are still non-atomic; Task 36 still works
+> around a poisoned manifest by manually `rmSync`-ing it rather than a
+> target-aware recovery path.
 
 - missing, `NaN`, fractional, zero, and negative `--limit` values are accepted;
 - unknown flags are ignored;
@@ -521,6 +756,14 @@ Missing or misleading coverage includes:
 
 ### P2-04 — deployment is not reproducible or clean
 
+> **Round 4 status: STILL OPEN.** `tools/deploy-bots-direct.ts` (the P0-05
+> replacement script) only checks env vars are *present*, never that the
+> credential has the project-admin capability Task 26's own text says the
+> Bot-creation endpoint needs. No Binary-orphan cleanup exists. No lockstep
+> record of build/bundle hash/target version/deployed Bot versions is
+> written anywhere. Model/Bot identifiers are still hardcoded literals with
+> no automated startup health check.
+
 - The direct script's credentials/permissions are not validated before work;
   Bot creation additionally needs project-admin capability not listed in the
   seed client's permission checklist.
@@ -532,6 +775,14 @@ Missing or misleading coverage includes:
   configuration or startup health check.
 
 ### P2-05 — the plan is not consistently executable from PowerShell
+
+> **Round 4 status: STILL OPEN.** The specific P0-05 blocker is fixed, but
+> the broader pattern isn't: `rmdir src/bots/example 2>/dev/null || true` and
+> `UNZIPPED_TSV_PATH=/path/... npx tsx tools/seed/generate-zip3-centroids.ts`
+> are both still Bash-only syntax with no PowerShell equivalent given. Task
+> 27 still knowingly commits imports of not-yet-created pages and explicitly
+> expects `tsc` to fail until Tasks 28–35 land, leaving an intermediate
+> unbuildable commit by design.
 
 In addition to P0-05, examples mix Bash and PowerShell semantics:
 
@@ -546,6 +797,15 @@ commands where needed.
 
 ### P2-06 — verification still overclaims product completion
 
+> **Round 4 status: STILL OPEN, confirmed verbatim.** Task 37 Step 5 still
+> states: "If every check above passes, the implementation matches every FR
+> in `Doctor_Appointment_Agent_Specs.md`." The preceding steps still cover
+> only one happy-path patient flow, one happy-path doctor flow plus a single
+> refusal-prompt check, one race spot-check, and one cancel/reschedule/
+> block-availability pass — no coverage of pagination, auth boundaries,
+> AI-safety adversarial inputs, referential integrity, retry recovery, or
+> deployment reproducibility.
+
 Task 37 says the implementation matches every FR if a short manual walkthrough
 passes. That walkthrough cannot prove pagination completeness, auth boundaries,
 AI safety, data-use policy, model lifecycle, referential integrity, retry
@@ -556,6 +816,17 @@ hashes, and failure injection.
 ---
 
 ## Verified improvements in the latest correction pass
+
+> **Round 4 status:** all six re-checked items below hold as real fixes, with
+> one wording caveat. "Both HealthCareServices now carry the identifiers
+> their conditional creates query" is true as a *fact* (both still carry
+> `identifier`), but the *mechanism* it describes is now stale — the P0-01/
+> P1-12 fix removed `ifNoneExist` conditional-create entirely in favor of
+> unconditional `PUT`-by-known-id; the identifiers are now audit/search-only,
+> not the identity mechanism. Separately, re-verification of "batch response
+> entries checked for non-2xx" surfaced one caveat worth folding into P2-01:
+> `assertNoFailedEntries` only iterates `response.entry`, so a response with
+> *fewer* entries than the request silently misses the un-returned ones.
 
 The following changes are real and should be retained:
 
@@ -618,24 +889,92 @@ The absence of runnable code is not evidence that plan defects are fixed. Code
 findings above are against the exact code blocks the plan instructs an
 implementer to create, the pinned reference source, and the supplied corpus.
 
+## Round 4 Re-verification Summary (2026-08-06)
+
+Every finding above was re-checked against commit `f77666d` by independently
+reading the actual Medplum source and the current plan text (not by trusting
+this document's own prose). Verdict tags:
+
+| # | Finding | Round 4 status |
+|---|---|---|
+| P0-01 | seed ID assumption | **FIXED** (`3c9ed87`) |
+| P0-02 | `$book`/`$cancel` wrong URL | **FIXED** (`3c9ed87`) |
+| P0-03 | slim run caps at 50 | **FIXED** (`f77666d`) |
+| P0-04 | ESM `__dirname` crash | **FIXED** (`f77666d`) |
+| P0-05 | PowerShell Bot deploy broken | **FIXED** (`f77666d`) |
+| P1-01 | booking trusts browser object | **PARTIALLY FIXED** — only post-book Communication-link swallow survives |
+| P1-02 | reschedule double-booking risk | STILL OPEN |
+| P1-03 | Schedule reuse / wrong timezone | STILL OPEN |
+| P1-04 | block-availability overlap/orphan Slot | STILL OPEN |
+| P1-05 | specialty inference incomplete | STILL OPEN |
+| P1-06 | NPPES taxonomy/validation gaps | STILL OPEN |
+| P1-07 | AI urgency/emergency safety | **RESOLVED** (2026-08-06, product decision: no urgency/triage classification) |
+| P1-08 | Gemini runtime contracts | STILL OPEN |
+| P1-09 | hard caps vs. "every patient" claims | STILL OPEN (wording nuance only) |
+| P1-10 | authorization is a display filter | STILL OPEN |
+| P1-11 | frontend state/recovery/tests | STILL OPEN |
+| P1-12 | full-mode conditional-create | **FIXED** (`3c9ed87`, same fix as P0-01) |
+| P1-13 | Medplum version mismatch | **FIXED** — plan now pins `5.1.27` |
+| P1-14 | doc self-contradictions | **DOES NOT HOLD** — all 5 sub-claims fail re-check |
+| P2-01 | tests encode wrong assumptions | PARTIALLY FIXED — 2 of ~13 sub-items stale |
+| P2-02 | retry/error handling brittle | STILL OPEN |
+| P2-03 | CLI/manifest unsafe | MOSTLY OPEN — 1 clause stale |
+| P2-04 | deployment not reproducible | STILL OPEN |
+| P2-05 | PowerShell inconsistency | STILL OPEN (beyond P0-05) |
+| P2-06 | verification overclaims completion | STILL OPEN |
+
+**Bottom line:** all 5 P0 blockers, and 4 of the 14 P1 findings (P1-07,
+P1-12, P1-13, and effectively P1-14), no longer describe the current plan.
+The original "NOT CLEARED" verdict is stale for the P0 tier specifically. It
+remains accurate in spirit for the P1/P2 tier: 9 of 14 P1 findings and all 6
+P2 findings are still live, confirmed defects as of this re-verification —
+most seriously the reschedule double-booking risk (P1-02) and the
+display-only authorization model (P1-10). This file should **not** be
+deleted; it should stay open until the revised closure order below is
+worked through.
+
+**Round 5 addendum (2026-08-06):** P1-07 is now resolved by an explicit
+product decision, not a code fix — the team chose to remove AI-driven
+urgency/triage classification entirely rather than add safety rules around
+it. See the P1-07 section above and the Data Model/Design/LLD/HLD/Specs docs
+for the resulting removal of the `urgency`/`priority` field and the second
+"Urgent Visit" HealthcareService throughout.
+
 ## Required closure order
 
-1. Fix the seed identity/reference design and prove it against Medplum
-   `v5.0.12`/the actual target, including Device and PractitionerRole links.
-2. Fix every FHIR operation URL and add resolved-URL contract tests.
-3. Make an all-files slim run expressible, fix ESM startup, validate CLI flags,
-   and scope the manifest to the target/transform.
-4. Replace the shell-embedded Bot deployment with a checked-in,
-   PowerShell-tested deploy command and live per-Bot verification.
-5. Bind/validate booking inputs and design recoverable post-book metadata;
-   redesign reschedule and block-availability failure semantics.
-6. Repair existing Schedules and timezone sourcing.
-7. Complete specialty mapping and NPPES result/provider-status validation.
-8. Resolve urgency/emergency safety, Gemini schemas/timeouts/provenance/model
-   migration, free-tier synthetic-only enforcement, pagination, and auth/thread
-   boundaries.
-9. Reconcile canonical documentation and turn the manual checklist into
-   measurable acceptance gates.
-10. Only then implement the app and run unit, corpus, build, live Medplum,
+*(Revised 2026-08-06 to reflect Round 4 status — struck items are fixed and
+kept only for context; do not re-do them.)*
+
+1. ~~Fix the seed identity/reference design...~~ — **done** (`3c9ed87`
+   switched to deterministic unconditional PUT; also closes P1-12).
+2. ~~Fix every FHIR operation URL...~~ — **done** (`3c9ed87`, all `$book`/
+   `$cancel` calls now use `fhirUrl()`).
+3. ~~Make an all-files slim run expressible, fix ESM startup...~~ — **done**
+   (`f77666d`: `--slim --all`, `__dirname` shim, manifest scoping still
+   partially open — see new item 8).
+4. ~~Replace the shell-embedded Bot deployment...~~ — **done** (`f77666d`:
+   `tools/deploy-bots-direct.ts`).
+5. **Bind/validate booking inputs and design recoverable post-book
+   metadata** — largely done for input validation (P1-01); the
+   post-`$book` Communication-link failure still has no
+   `metadataPending`/recovery signal. **Redesign reschedule and
+   block-availability failure semantics** — still fully open (P1-02, P1-04).
+6. **Repair existing Schedules and timezone sourcing** — still open (P1-03).
+7. **Complete specialty mapping and NPPES result/provider-status
+   validation** — still open (P1-05, P1-06).
+8. **Harden CLI/manifest safety and retry/error handling** — still open
+   (P2-02, P2-03: flag validation, manifest atomicity/scoping, retry
+   backoff, entry-count-mismatch detection).
+9. ~~Resolve urgency/emergency safety~~ — **done by product decision**
+   (2026-08-06: no urgency/triage classification at all — P1-07). **Gemini
+   schemas/timeouts/provenance/model migration, free-tier synthetic-only
+   enforcement, pagination, and auth/thread boundaries** — still fully open
+   (P1-08, P1-09, P1-10).
+10. **Close frontend state/recovery/test gaps and deployment
+    reproducibility** — still open (P1-11, P2-04, P2-05).
+11. ~~Reconcile canonical documentation...~~ — **substantially done**; the
+    specific contradictions P1-14 cited no longer exist. Turning Task 37's
+    manual checklist into measurable acceptance gates (P2-06) is still open.
+12. Only then implement the app and run unit, corpus, build, live Medplum,
     deployment, race, recovery, and end-to-end checks before deleting this
     report.
