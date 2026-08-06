@@ -52,7 +52,7 @@ traceability and are now also reflected in the maintained design documents:
 
 **Files:**
 - Create: everything under this repo's root copied from `medplum-scheduling-demo/` (`src/`, `data/`, `package.json`, `tsconfig.json`, `vite.config.ts`, `esbuild-script.mjs`, `.eslintrc`/`eslint.config.*`, `index.html`) — the reference clone at `medplum-scheduling-demo/` (project root, gitignored) is the source; copy its files in, do not `git clone` a nested repo. **The fork's own `.gitignore` is explicitly excluded from this copy** (see Step 1a) — it doesn't ignore `.claude/`/`medplum/`/`medplum-scheduling-demo/` (paths that only make sense at this outer repo's root) and it ignores `package-lock.json`, which this repo needs tracked.
-- Create: `.env` at project root (gitignored already) — `VITE_MEDPLUM_BASE_URL`, `VITE_MEDPLUM_CLIENT_ID` (values come from whichever Medplum project this is deployed against — placeholder values are fine for this task, real values needed before Task 10).
+- Create: `.env` at project root (gitignored already) — `MEDPLUM_BASE_URL`, `MEDPLUM_CLIENT_ID` (values come from whichever Medplum project this is deployed against — placeholder values are fine for this task, real values needed before Task 10). **No `VITE_` prefix** — the fork's `vite.config.ts` sets a custom `envPrefix: ['MEDPLUM_', 'GOOGLE_']` that overrides Vite's default `VITE_` filter, and `src/config.ts` reads `import.meta.env.MEDPLUM_BASE_URL`/`MEDPLUM_CLIENT_ID` directly (confirmed against the fork's source during Task 1 implementation, 2026-08-06) — a `VITE_`-prefixed `.env` would be silently invisible to the app.
 - Modify: this repo's root `.gitignore` — **merge in**, don't overwrite, the fork-specific entries it's missing.
 - Modify: root `package.json` and `package-lock.json` — pin every copied `@medplum/*` dependency and devDependency to exactly `5.1.27` before establishing the baseline.
 
@@ -96,14 +96,16 @@ npm ls @medplum/core @medplum/react @medplum/fhirtypes @medplum/mock @medplum/bo
 
 Expected: every listed package resolves to `5.1.27`; no `invalid` or mixed-version entry appears.
 
+**Known preexisting fragility (confirmed 2026-08-06, not caused by the 5.1.27 pin):** `@medplum/react@5.1.27` peer-requires `@mantine/spotlight@^8.0.0`, which the fork's `package.json` never declares, while the fork pins `@mantine/core@8.3.11` — below what any resolvable `spotlight` release requires. A clean `npm install` therefore hits `ERESOLVE` regardless of the Medplum version. Fix: bump `@mantine/core`/`@mantine/hooks`/`@mantine/notifications` to the newest `8.3.x` that satisfies the peer requirement (`8.3.18` at the time this was fixed) and add `@mantine/spotlight` pinned to the same exact version as an explicit devDependency. Do not use `--legacy-peer-deps` — it masks the conflict instead of resolving it.
+
 - [ ] **Step 4: Create `.env`**
 
 ```
-VITE_MEDPLUM_BASE_URL=https://api.medplum.com/
-VITE_MEDPLUM_CLIENT_ID=
+MEDPLUM_BASE_URL=https://api.medplum.com/
+MEDPLUM_CLIENT_ID=
 ```
 
-Leave `VITE_MEDPLUM_CLIENT_ID` blank until a real Medplum project/client exists (Task 10 needs one; the dev server itself will run and show the sign-in page without it).
+Leave `MEDPLUM_CLIENT_ID` blank until a real Medplum project/client exists (Task 10 needs one; the dev server itself will run and show the sign-in page without it). These same non-prefixed names are used consistently everywhere else the plan touches Medplum credentials (the seed CLI, the direct Bot-deploy script) — only this step's earlier `VITE_`-prefixed draft was wrong.
 
 - [ ] **Step 5: Confirm the stock app boots (manual verification — no live Medplum project needed yet)**
 
@@ -120,6 +122,8 @@ npm test
 ```
 
 Expected: all of the fork's pre-existing tests (`block-availability.test.ts`, `book-appointment.test.ts`, `cancel-appointment.test.ts`, `set-availability.test.ts`, `example-data.test.ts`) pass. This is the "clean baseline" — Task 2 will delete some of these files along with the bots they test.
+
+**Vitest config note (confirmed 2026-08-06):** the gitignored reference clones (`medplum/`, `medplum-scheduling-demo/`) sit as literal sibling directories to `src/` at project root per Step 1. Vitest has no default exclusion for arbitrary directories beyond `node_modules`/`dist`/etc., so an unmodified `vitest.config.js` recurses into them and collects their entire embedded Medplum-monorepo test suites (hundreds of foreign, failing tests). Add an explicit `exclude` array to `vitest.config.js` — Vitest's documented defaults plus `**/medplum/**` and `**/medplum-scheduling-demo/**` — before running Step 6's baseline. Any later task that adds another repo-wide tool hits the identical problem unless it also scopes these two directories away.
 
 - [ ] **Step 7: Commit**
 

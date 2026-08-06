@@ -12,6 +12,10 @@ venv/
 medplum/
 medplum-scheduling-demo/
 
+# Subagent-driven-development scratch workspace (ledger, task briefs/reports) —
+# ephemeral tooling state, not part of the app.
+.superpowers/
+
 # Fork-specific entries (from medplum-scheduling-demo/.gitignore)
 # Note: package-lock.json is intentionally NOT ignored — this repo needs its
 # lockfile tracked for reproducible installs.
