@@ -68,26 +68,6 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BlockAvail
     )
   );
 
-  // Block free slots that overlap the period
-  const freeSlotsToBlock: Slot[] = await medplum.searchResources(
-    'Slot',
-    `schedule=${schedule.reference}&start=lt${end}&start=ge${start}&status=free`
-  );
-  entries.push(
-    ...freeSlotsToBlock.map(
-      (slot): BundleEntry => ({
-        request: {
-          method: 'PUT',
-          url: `Slot?_id=${slot.id}`,
-        },
-        resource: {
-          ...slot,
-          status: 'busy-unavailable',
-        },
-      })
-    )
-  );
-
   // Execute the batch to create/update all resources at once
   const responseBundle = await medplum.executeBatch({
     resourceType: 'Bundle',
