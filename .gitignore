@@ -11,3 +11,18 @@ venv/
 # not part of this project, never meant to be committed here.
 medplum/
 medplum-scheduling-demo/
+
+# Fork-specific entries (from medplum-scheduling-demo/.gitignore)
+# Note: package-lock.json is intentionally NOT ignored — this repo needs its
+# lockfile tracked for reproducible installs.
+logs
+*.log
+npm-debug.log*
+dist-ssr
+*.local
+data/core/example-bots.json
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+node_modules
