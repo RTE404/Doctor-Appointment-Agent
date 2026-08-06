@@ -1,0 +1,60 @@
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000001",
+      "resource": {
+        "resourceType": "HealthcareService",
+        "id": "office-visit",
+        "identifier": [{ "system": "http://example.com/agent-config", "value": "office-visit" }],
+        "name": "Office Visit",
+        "extension": [
+          {
+            "url": "https://medplum.com/fhir/StructureDefinition/SchedulingParameters",
+            "extension": [
+              { "url": "duration", "valueDuration": { "value": 30, "unit": "min", "system": "http://unitsofmeasure.org", "code": "min" } }
+            ]
+          }
+        ]
+      },
+      "request": { "method": "PUT", "url": "HealthcareService/office-visit" }
+    },
+    {
+      "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000003",
+      "resource": {
+        "resourceType": "Device",
+        "id": "ai-appointment-agent",
+        "deviceName": [{ "name": "AI Appointment Agent", "type": "user-friendly-name" }],
+        "identifier": [{ "system": "http://example.com/agent-config", "value": "ai-appointment-agent" }]
+      },
+      "request": { "method": "PUT", "url": "Device/ai-appointment-agent" }
+    },
+    {
+      "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000004",
+      "resource": {
+        "resourceType": "CodeSystem",
+        "id": "agent-communication-category",
+        "url": "http://example.com/agent-communication-category",
+        "status": "active",
+        "content": "complete",
+        "concept": [
+          { "code": "ai-previsit-summary", "display": "AI Pre-Visit Summary" },
+          { "code": "ai-chat", "display": "AI Patient Chat" }
+        ]
+      },
+      "request": { "method": "PUT", "url": "CodeSystem/agent-communication-category" }
+    },
+    {
+      "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000005",
+      "resource": {
+        "resourceType": "ValueSet",
+        "id": "agent-communication-category",
+        "url": "http://example.com/agent-communication-category-vs",
+        "status": "active",
+        "compose": { "include": [{ "system": "http://example.com/agent-communication-category" }] }
+      },
+      "request": { "method": "PUT", "url": "ValueSet/agent-communication-category" }
+    }
+  ]
+}
