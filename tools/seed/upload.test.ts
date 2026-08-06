@@ -1,7 +1,11 @@
 // tools/seed/upload.test.ts
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { Bundle } from '@medplum/fhirtypes';
 import { uploadBundle } from './upload';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('uploadBundle', () => {
   test('calls executeBatch once on success and returns the response', async () => {
@@ -77,6 +81,47 @@ describe('uploadBundle', () => {
     const medplum = { executeBatch } as any;
 
     await expect(uploadBundle(medplum, bundle)).rejects.toThrow(/1 failed entr/);
+  });
+
+  test('a throttled batch entry (429) retries after waiting the server-diagnosed backoff, then succeeds', async () => {
+    // Reproduces a live failure: a real Medplum hosted project's rate limiter
+    // returned 429s with `_msBeforeNext` still ~24-48s away, and the retry
+    // loop was firing all 3 attempts with no delay — instantly re-hitting
+    // the same exhausted rate-limit window every time.
+    vi.useFakeTimers();
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'batch',
+      entry: [{ resource: { resourceType: 'Encounter', id: 'e1' }, request: { method: 'POST', url: 'Encounter' } }],
+    } as unknown as Bundle;
+    const throttledResponse: Bundle = {
+      resourceType: 'Bundle',
+      type: 'batch-response',
+      entry: [
+        {
+          response: {
+            status: '429',
+            outcome: {
+              resourceType: 'OperationOutcome',
+              issue: [{ severity: 'error', code: 'throttled', diagnostics: JSON.stringify({ _msBeforeNext: 5000 }) }],
+            },
+          },
+        },
+      ],
+    };
+    const okResponse: Bundle = { resourceType: 'Bundle', type: 'batch-response', entry: [{ response: { status: '201' } }] };
+    const executeBatch = vi.fn().mockResolvedValueOnce(throttledResponse).mockResolvedValueOnce(okResponse);
+    const medplum = { executeBatch } as any;
+
+    const resultPromise = uploadBundle(medplum, bundle);
+    // Only 4999ms elapsed: must not have retried yet.
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(executeBatch).toHaveBeenCalledTimes(1);
+    // The remaining 1ms crosses the full 5000ms the server asked for.
+    await vi.advanceTimersByTimeAsync(1);
+    await resultPromise;
+
+    expect(executeBatch).toHaveBeenCalledTimes(2);
   });
 
   test('a fully successful batch response does not throw', async () => {
