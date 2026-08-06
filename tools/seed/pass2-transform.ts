@@ -22,30 +22,34 @@ function nuccCodeForLabel(label: string): string {
 }
 
 /**
- * Every kept resource retains an explicit source identifier for audit and
- * lookup. Idempotence itself comes from deterministic PUT, not from a POST
- * conditional-create whose server-assigned id would differ from stableId.
+ * Every kept resource retains an explicit source identifier for audit,
+ * lookup, and idempotence: only a super-admin account can choose a
+ * resource's id (Medplum's `canSetId()`), so a normal client-credentials
+ * login can't rely on deterministic PUT. Idempotence instead comes from
+ * POST conditional-create against this identifier (see conditionalCreate).
  */
 function withStableIdentifier<T extends { identifier?: Identifier[] }>(resource: T, stableId: string): T {
   return { ...resource, identifier: [...(resource.identifier ?? []), { system: SYNTHEA_STABLE_ID_SYSTEM, value: stableId }] };
 }
 
-function deterministicUpsert(resourceType: string, stableId: string): BundleEntry['request'] {
-  return { method: 'PUT', url: `${resourceType}/${stableId}` };
+function conditionalCreate(resourceType: string, stableId: string): BundleEntry['request'] {
+  return { method: 'POST', url: resourceType, ifNoneExist: `identifier=${SYNTHEA_STABLE_ID_SYSTEM}|${stableId}` };
 }
 
 /**
- * Maps every entry's urn:uuid fullUrl to the deterministic reference used
- * by its PUT request. This is valid only because transformBundle rewrites
- * every retained entry to `PUT ResourceType/{sourceId}`. Medplum replaces
- * ids on POST; changing these requests back to POST would invalidate every
- * reference produced by this index.
+ * Maps every entry's urn:uuid fullUrl to the conditional reference
+ * (`ResourceType?identifier=...`) that resolves to it once uploaded. The
+ * target's real id is server-assigned on conditional-create and unknown at
+ * transform time, so a plain `ResourceType/{id}` reference isn't available
+ * here — Medplum resolves the conditional form by search when the
+ * referencing resource is written, which requires the target to already
+ * exist (see chunk-bundle.ts's identity-before-clinical upload order).
  */
 function buildFullUrlIndex(bundle: Bundle): Map<string, string> {
   const index = new Map<string, string>();
   for (const entry of bundle.entry ?? []) {
     if (entry.resource?.resourceType && entry.resource.id) {
-      const target = `${entry.resource.resourceType}/${entry.resource.id}`;
+      const target = `${entry.resource.resourceType}?identifier=${SYNTHEA_STABLE_ID_SYSTEM}|${entry.resource.id}`;
       // Real Synthea bundles set fullUrl to exactly urn:uuid:{resource.id},
       // so both keys resolve to the same target there. Deriving the second
       // key directly from resource.id also covers bundles that omit
@@ -87,12 +91,12 @@ function resolveReferences<T extends Record<string, unknown>>(resource: T, index
 /**
  * Per-bundle rewrite. In 'slim' mode, filters to the 7 resource types the
  * app reads; in 'full' mode, keeps everything. Every kept resource is
- * deterministically PUT-upserted at its source id, and every reference field it carries —
- * to an identity resource or to another clinical resource — is resolved to
- * its final, real form before this function returns (see
- * `buildFullUrlIndex`'s doc comment for why that's already knowable).
- * Practitioner additionally gets the resolved specialty injected as a real
- * NUCC-coded PractitionerRole plus a Practitioner.qualification[0] display
+ * conditionally-created (POST + ifNoneExist against its source identifier —
+ * see conditionalCreate), and every reference field it carries — to an
+ * identity resource or to another clinical resource — is rewritten to the
+ * corresponding conditional reference (see `buildFullUrlIndex`'s doc
+ * comment). Practitioner additionally gets the resolved specialty injected
+ * as a real NUCC-coded PractitionerRole plus a Practitioner.qualification[0] display
  * copy, and the mandatory timezone extension.
  */
 export function transformBundle(bundle: Bundle, specialtiesByStableId: Map<string, string>, mode: 'slim' | 'full'): Bundle {
@@ -106,42 +110,41 @@ export function transformBundle(bundle: Bundle, specialtiesByStableId: Map<strin
     const resource = resolveReferences(entry.resource as { resourceType: string; id?: string }, fullUrlIndex);
     if (!resource.id) throw new Error(`Cannot seed ${resource.resourceType} without a deterministic source id`);
 
+    const stableId = resource.id;
+
     if (resource.resourceType === 'Practitioner') {
-      const specialtyLabel = specialtiesByStableId.get(resource.id) ?? 'General Practice';
+      const specialtyLabel = specialtiesByStableId.get(stableId) ?? 'General Practice';
       const nuccCode = nuccCodeForLabel(specialtyLabel);
+      const { id: _discardedId, ...resourceWithoutId } = resource as any;
       const practitionerWithQualification = {
-        ...resource,
+        ...resourceWithoutId,
         qualification: [{ code: { text: specialtyLabel } }],
-        extension: [...((resource as any).extension ?? []), { url: TIMEZONE_EXT_URL, valueCode: DEFAULT_TIMEZONE }],
+        extension: [...(resourceWithoutId.extension ?? []), { url: TIMEZONE_EXT_URL, valueCode: DEFAULT_TIMEZONE }],
       };
-      // withStableIdentifier<T extends { identifier?: Identifier[] }> constrains on a "weak type"
-      // (a single optional property); practitionerWithQualification's added qualification/extension
-      // fields share none of it, which trips TS's weak-type overlap check even though the runtime
-      // spread inside withStableIdentifier is unaffected. The result is cast to BundleEntry['resource']
-      // immediately below regardless, so the precise inferred type here isn't otherwise relied on.
-      const practitioner = withStableIdentifier(practitionerWithQualification as any, resource.id);
-      outputEntries.push({ ...entry, resource: practitioner as BundleEntry['resource'], request: deterministicUpsert('Practitioner', resource.id) });
-      // PractitionerRole.practitioner is already a plain, resolved
-      // reference (Practitioner/{resource.id}) — no urn:uuid involved
-      // here at all, since this entry is created fresh by this function,
-      // not sourced from Synthea.
+      const practitioner = withStableIdentifier(practitionerWithQualification, stableId);
+      outputEntries.push({ ...entry, resource: practitioner as BundleEntry['resource'], request: conditionalCreate('Practitioner', stableId) });
+      // PractitionerRole.practitioner is a conditional reference, not a
+      // plain one — this entry is created fresh by this function (never
+      // sourced from Synthea), but the Practitioner it points to is
+      // conditionally-created too, so its real id isn't known here either.
       outputEntries.push({
         resource: {
           resourceType: 'PractitionerRole',
-          id: `${resource.id}-role`,
-          practitioner: { reference: `Practitioner/${resource.id}` },
+          identifier: [{ system: SYNTHEA_STABLE_ID_SYSTEM, value: `${stableId}-role` }],
+          practitioner: { reference: `Practitioner?identifier=${SYNTHEA_STABLE_ID_SYSTEM}|${stableId}` },
           specialty: [{ coding: [{ system: NUCC_SYSTEM, code: nuccCode, display: specialtyLabel }] }],
         } as BundleEntry['resource'],
-        request: deterministicUpsert('PractitionerRole', `${resource.id}-role`),
+        request: conditionalCreate('PractitionerRole', `${stableId}-role`),
       });
       continue;
     }
 
-    // Every other retained type uses the same deterministic PUT identity.
+    // Every other retained type uses the same conditional-create identity.
+    const { id: _discardedId, ...resourceWithoutId } = resource as any;
     outputEntries.push({
       ...entry,
-      resource: withStableIdentifier(resource as any, resource.id) as BundleEntry['resource'],
-      request: deterministicUpsert(resource.resourceType, resource.id),
+      resource: withStableIdentifier(resourceWithoutId, stableId) as BundleEntry['resource'],
+      request: conditionalCreate(resource.resourceType, stableId),
     });
   }
 

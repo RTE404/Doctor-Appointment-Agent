@@ -6,7 +6,6 @@
       "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000001",
       "resource": {
         "resourceType": "HealthcareService",
-        "id": "office-visit",
         "identifier": [{ "system": "http://example.com/agent-config", "value": "office-visit" }],
         "name": "Office Visit",
         "extension": [
@@ -18,23 +17,21 @@
           }
         ]
       },
-      "request": { "method": "PUT", "url": "HealthcareService/office-visit" }
+      "request": { "method": "POST", "url": "HealthcareService", "ifNoneExist": "identifier=http://example.com/agent-config|office-visit" }
     },
     {
       "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000003",
       "resource": {
         "resourceType": "Device",
-        "id": "ai-appointment-agent",
         "deviceName": [{ "name": "AI Appointment Agent", "type": "user-friendly-name" }],
         "identifier": [{ "system": "http://example.com/agent-config", "value": "ai-appointment-agent" }]
       },
-      "request": { "method": "PUT", "url": "Device/ai-appointment-agent" }
+      "request": { "method": "POST", "url": "Device", "ifNoneExist": "identifier=http://example.com/agent-config|ai-appointment-agent" }
     },
     {
       "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000004",
       "resource": {
         "resourceType": "CodeSystem",
-        "id": "agent-communication-category",
         "url": "http://example.com/agent-communication-category",
         "status": "active",
         "content": "complete",
@@ -43,18 +40,17 @@
           { "code": "ai-chat", "display": "AI Patient Chat" }
         ]
       },
-      "request": { "method": "PUT", "url": "CodeSystem/agent-communication-category" }
+      "request": { "method": "POST", "url": "CodeSystem", "ifNoneExist": "url=http://example.com/agent-communication-category" }
     },
     {
       "fullUrl": "urn:uuid:00000000-0000-0000-0000-000000000005",
       "resource": {
         "resourceType": "ValueSet",
-        "id": "agent-communication-category",
         "url": "http://example.com/agent-communication-category-vs",
         "status": "active",
         "compose": { "include": [{ "system": "http://example.com/agent-communication-category" }] }
       },
-      "request": { "method": "PUT", "url": "ValueSet/agent-communication-category" }
+      "request": { "method": "POST", "url": "ValueSet", "ifNoneExist": "url=http://example.com/agent-communication-category-vs" }
     }
   ]
 }

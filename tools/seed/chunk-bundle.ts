@@ -26,10 +26,13 @@ export interface SplitBundles {
  * Observation, Claim), so 'full' mode actually keeps everything Task 6
  * decided to keep, instead of silently re-dropping it here. No reference
  * rewriting happens in this function — Task 6's transformBundle already
- * resolved every reference to its final, real form before this function
- * ever sees the bundle. The referenced ids are guaranteed because every
- * entry is an unconditional deterministic PUT, not a POST create whose id
- * Medplum would replace. Chunking exists purely because a single patient's full
+ * rewrote every reference to its final conditional-reference form
+ * (`ResourceType?identifier=...`) before this function ever sees the
+ * bundle. Those conditional references only resolve once their target
+ * actually exists on the server (Medplum searches for it and throws if
+ * not found — it doesn't defer), which is why identity resources are
+ * uploaded as one transaction before any clinical chunk is uploaded
+ * below. Chunking exists purely because a single patient's full
  * transaction can exceed Medplum's default 1MB JSON body limit (largest
  * observed slim bundle: 2.42MB, measured directly against the real
  * corpus) — this avoids depending on a non-default server config that
