@@ -18,7 +18,6 @@ import { AppointmentDetailPage } from './pages/AppointmentDetailPage';
 import { AppointmentsPage } from './pages/AppointmentsPage';
 import { LandingPage } from './pages/LandingPage';
 import { PatientPage } from './pages/PatientPage';
-import { PatientSchedulePage } from './pages/PatientSchedulePage';
 import { ResourcePage } from './pages/ResourcePage';
 import { SchedulePage } from './pages/SchedulePage';
 import { SearchPage } from './pages/SearchPage';
@@ -106,10 +105,6 @@ export function App(): JSX.Element | null {
               <Route path="/signin" element={<SignInPage />} />
               <Route path="/Schedule" element={schedule ? <Navigate to={`/Schedule/${schedule.id}`} /> : <Loading />} />
               <Route path="/Schedule/:id" element={schedule ? <SchedulePage /> : <Loading />} />
-              <Route
-                path="/Patient/:patientId/Schedule/:scheduleId"
-                element={schedule ? <PatientSchedulePage /> : <Loading />}
-              />
               <Route path="/Patient/:id" element={<PatientPage />}>
                 <Route index element={<PatientPage />} />
                 <Route path="*" element={<PatientPage />} />

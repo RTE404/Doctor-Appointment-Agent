@@ -35,10 +35,14 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BlockAvail
     resource: blockedSlot,
   });
 
-  // Cancel booked appointments that overlap the period
+  // Cancel booked appointments that overlap the period, for THIS schedule's
+  // practitioner only — the original search had no actor/schedule scope at
+  // all, so blocking one doctor's time could cancel every other doctor's
+  // overlapping appointments too.
+  const scheduleResource = await medplum.readReference(schedule);
   const appointmentsToCancel: Appointment[] = await medplum.searchResources(
     'Appointment',
-    `date=lt${end}&date=ge${start}&status=booked`
+    `date=lt${end}&date=ge${start}&status=booked&actor=${scheduleResource.actor?.[0]?.reference}`
   );
   entries.push(
     ...appointmentsToCancel.map(

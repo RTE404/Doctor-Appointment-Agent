@@ -137,12 +137,14 @@ git commit -m "chore: fork scheduling demo and pin Medplum 5.1.27"
 ### Task 2: Remove the superseded free-slot mechanism and fix its ripple effects
 
 **Files:**
-- Delete: `src/bots/example/example-data.ts`, `src/bots/example/example-data.test.ts`, `src/bots/core/set-availability.ts`, `src/bots/core/set-availability.test.ts`, `src/bots/core/book-appointment.ts`, `src/bots/core/book-appointment.test.ts`, `src/components/actions/SetAvailability.tsx`, `src/components/actions/CreateAppointment.tsx`.
-- Modify: `src/components/actions/CreateUpdateSlot.tsx` (remove the `'free'`-status create branch and questionnaire option), `src/pages/SchedulePage.tsx` (remove `SetAvailability`/`CreateAppointment` wiring), `src/scripts/deploy-bots.ts` (remove the three deleted bots from the `Bots` array).
+- Delete: `src/bots/example/example-data.ts`, `src/bots/example/example-data.test.ts`, `src/bots/core/set-availability.ts`, `src/bots/core/set-availability.test.ts`, `src/bots/core/book-appointment.ts`, `src/bots/core/book-appointment.test.ts`, `src/components/actions/SetAvailability.tsx`, `src/components/actions/CreateAppointment.tsx`, `src/pages/PatientSchedulePage.tsx`, `src/components/actions/PatientActions.tsx`.
+- Modify: `src/components/actions/CreateUpdateSlot.tsx` (remove the `'free'`-status create branch and questionnaire option), `src/pages/SchedulePage.tsx` (remove `SetAvailability`/`CreateAppointment` wiring), `src/scripts/deploy-bots.ts` (remove the three deleted bots from the `Bots` array), `src/App.tsx` (remove the `/Patient/:patientId/Schedule/:scheduleId` route and its `PatientSchedulePage` import), `src/pages/PatientPage.tsx` (remove the `PatientActions` column).
 
 **Interfaces:**
 - Consumes: the fork's file layout from Task 1.
 - Produces: `SchedulePage.tsx` as a read-only "booked & blocked time" calendar (still shows `busy-unavailable` blocks and `Appointment`s; never shows or creates `free` Slots). `CreateUpdateSlot.tsx` only ever creates `busy-unavailable` blocks or edits an existing (non-free) Slot's time range.
+
+**Found during implementation (2026-08-06):** `PatientSchedulePage.tsx` and `PatientActions.tsx` were originally missing from this task's Files list. They're the same dead-code pattern as Fork-Surgery Decision #1 above, one hop further: `PatientActions.tsx`'s only content is a button navigating to `/Patient/:patientId/Schedule/:scheduleId`; that route renders `PatientSchedulePage.tsx`, whose `slotEvents` filters to `status === 'free'` only and whose sole click handler opens the now-deleted `CreateAppointment`. Once nothing creates `free` Slots, both files are permanently unreachable dead code, exactly like `CreateAppointment.tsx` itself — delete them, their `App.tsx` route/import, and the `PatientActions` column in `PatientPage.tsx` (widen the remaining `PatientSummary`/`PatientDetails` columns). This is squarely this task's own scope, not Task 27's (which only adds the new `/agent/*`/`/desk/*` route trees) — `UploadDataPage.tsx`'s stale 5-bot check is the one related ripple effect that *is* correctly deferred, to Task 26 (Fork-Surgery Decision #6 above already says so).
 
 - [ ] **Step 1: Delete the dead bots and their tests**
 

@@ -3,14 +3,7 @@
 import { Modal } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { createReference, getQuestionnaireAnswers, normalizeErrorString } from '@medplum/core';
-import type {
-  Questionnaire,
-  QuestionnaireItem,
-  QuestionnaireResponse,
-  Reference,
-  Schedule,
-  Slot,
-} from '@medplum/fhirtypes';
+import type { Questionnaire, QuestionnaireResponse, Reference, Schedule, Slot } from '@medplum/fhirtypes';
 import { Loading, QuestionnaireForm, useMedplum } from '@medplum/react';
 import { IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
 import { useContext } from 'react';
@@ -49,7 +42,6 @@ export function CreateUpdateSlot(props: CreateUpdateSlotProps): JSX.Element {
   // If an editing slot was passed, update it otherwise create a new slot
   async function handleQuestionnaireSubmit(formData: QuestionnaireResponse): Promise<void> {
     const answers = getQuestionnaireAnswers(formData);
-    const status = answers['status']?.valueCoding?.code as 'free' | 'busy-unavailable';
     const start = answers['start-date'].valueDateTime as string;
     const end = answers['end-date'].valueDateTime as string;
     const scheduleReference = formData.subject as Reference<Schedule>;
@@ -62,23 +54,14 @@ export function CreateUpdateSlot(props: CreateUpdateSlotProps): JSX.Element {
           start,
           end,
         });
-      } else if (status === 'busy-unavailable') {
-        // Create new slot and block availability
+      } else {
+        // Create a new blocked-time slot
         const input: BlockAvailabilityEvent = {
           schedule: scheduleReference,
           start,
           end,
         };
         await medplum.executeBot({ system: 'http://example.com', value: 'block-availability' }, input);
-      } else if (status === 'free') {
-        // Create new slot
-        await medplum.createResource({
-          resourceType: 'Slot',
-          schedule: scheduleReference,
-          start,
-          end,
-          status,
-        });
       }
 
       onSlotsUpdated();
@@ -121,20 +104,6 @@ export function CreateUpdateSlot(props: CreateUpdateSlotProps): JSX.Element {
       },
     ],
   };
-
-  // If creating a Slot add a field to select the status
-  if (!editingSlot) {
-    (slotQuestionnaire.item as QuestionnaireItem[]).unshift({
-      linkId: 'status',
-      type: 'choice',
-      answerOption: [
-        { valueCoding: { code: 'free', display: 'Available' } },
-        { valueCoding: { code: 'busy-unavailable', display: 'Block' } },
-      ],
-      required: true,
-      initial: [{ valueCoding: { code: 'free', display: 'Available' } }],
-    });
-  }
 
   return (
     <Modal opened={opened} onClose={handlers.close}>

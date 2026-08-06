@@ -100,6 +100,76 @@ describe('Block Availability', async () => {
     expect(cancelledAppointment.status).toBe('cancelled');
   });
 
+  test('Does not cancel a different schedule practitioner appointment in the same window', async () => {
+    // A different practitioner's Schedule, overlapping the same block window
+    const otherSchedule: Schedule = await medplum.createResource({
+      resourceType: 'Schedule',
+      active: true,
+      actor: [{ reference: 'Practitioner/dr-bob-jones' }],
+    });
+
+    // Booked appointment for the OTHER practitioner, overlapping the block period
+    const otherSlot: Slot = await medplum.createResource({
+      resourceType: 'Slot',
+      status: 'busy',
+      start: '2024-08-16T09:00:00.000Z',
+      end: '2024-08-16T10:00:00.000Z',
+      schedule: createReference(otherSchedule),
+    });
+    const otherAppointment: Appointment = await medplum.createResource({
+      resourceType: 'Appointment',
+      status: 'booked',
+      slot: [createReference(otherSlot)],
+      start: otherSlot.start,
+      end: otherSlot.end,
+      appointmentType: {
+        coding: [
+          {
+            system: 'http://terminology.hl7.org/CodeSystem/v2-0276',
+            code: 'FOLLOWUP',
+            display: 'A follow up visit from a previous appointment',
+          },
+        ],
+      },
+      serviceType: [
+        {
+          coding: [
+            {
+              system: 'http://snomed.info/sct',
+              code: '11429006',
+              display: 'Consultation',
+            },
+          ],
+        },
+      ],
+      participant: [
+        { actor: { reference: 'Patient/homer-simpson' }, status: 'accepted' },
+        { actor: { reference: 'Practitioner/dr-bob-jones' }, status: 'accepted' },
+      ],
+    });
+
+    // Block dr-alice-smith's schedule for the same window
+    const input: BlockAvailabilityEvent = {
+      schedule: createReference(schedule),
+      start: '2024-08-16T09:00:00.000Z',
+      end: '2024-08-16T21:00:00.000Z',
+    };
+
+    const responseBundle = await handler(medplum, { bot, input, contentType, secrets: {} });
+
+    // Only the busy-unavailable slot was created; the other practitioner's appointment
+    // must not appear in the response bundle at all.
+    expect(responseBundle.entry?.length).toBe(1);
+    const createdSlot = responseBundle.entry?.[0].resource as Slot;
+    expect(createdSlot.resourceType).toBe('Slot');
+    expect(createdSlot.status).toBe('busy-unavailable');
+
+    // The other practitioner's appointment survives, untouched, in the database.
+    const refreshedOtherAppointment = await medplum.readResource('Appointment', otherAppointment.id as string);
+    expect(refreshedOtherAppointment).toBeDefined();
+    expect(refreshedOtherAppointment.status).toBe('booked');
+  });
+
   test('No booked appointments to cancel', async () => {
     // Booked appointment outside of the block period
     const slot: Slot = await medplum.createResource({
