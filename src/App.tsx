@@ -8,7 +8,9 @@ import {
   IconClipboard,
   IconDatabaseImport,
   IconHealthRecognition,
+  IconMessageCircle2,
   IconRobot,
+  IconStethoscope,
   IconUser,
 } from '@tabler/icons-react';
 import { Suspense, useEffect, useState } from 'react';
@@ -24,11 +26,22 @@ import { SearchPage } from './pages/SearchPage';
 import { SignInPage } from './pages/SignInPage';
 import { UploadDataPage } from './pages/UploadDataPage';
 import { ScheduleContext } from './Schedule.context';
+import { BookingContext } from './booking.context';
+import type { BookingState } from './booking.context';
+import { PatientPickerPage } from './pages/agent/PatientPickerPage';
+import { PatientHistoryPage } from './pages/agent/PatientHistoryPage';
+import { DoctorResultsPage } from './pages/agent/DoctorResultsPage';
+import { SlotPickerPage } from './pages/agent/SlotPickerPage';
+import { BookingConfirmationPage } from './pages/agent/BookingConfirmationPage';
+import { DoctorLookupPage } from './pages/desk/DoctorLookupPage';
+import { DoctorQueuePage } from './pages/desk/DoctorQueuePage';
+import { PatientAgentChatPage } from './pages/desk/PatientAgentChatPage';
 
 export function App(): JSX.Element | null {
   const medplum = useMedplum();
   const profile = useMedplumProfile() as Practitioner;
   const [schedule, setSchedule] = useState<Schedule | undefined>();
+  const [booking, setBooking] = useState<BookingState>({});
 
   useEffect(() => {
     if (medplum.isLoading() || !profile) {
@@ -95,35 +108,53 @@ export function App(): JSX.Element | null {
             { icon: <IconHealthRecognition />, label: 'Upload Example Data', href: '/upload/example' },
           ],
         },
+        {
+          title: 'Patient Agent',
+          links: [{ icon: <IconStethoscope />, label: 'New Request', href: '/agent' }],
+        },
+        {
+          title: 'Doctor Desk',
+          links: [{ icon: <IconMessageCircle2 />, label: 'Doctor Desk', href: '/desk' }],
+        },
       ]}
     >
       <ScheduleContext.Provider value={{ schedule: schedule }}>
-        <ErrorBoundary>
-          <Suspense fallback={<Loading />}>
-            <Routes>
-              <Route path="/" element={profile ? <Navigate to="/Schedule" /> : <LandingPage />} />
-              <Route path="/signin" element={<SignInPage />} />
-              <Route path="/Schedule" element={schedule ? <Navigate to={`/Schedule/${schedule.id}`} /> : <Loading />} />
-              <Route path="/Schedule/:id" element={schedule ? <SchedulePage /> : <Loading />} />
-              <Route path="/Patient/:id" element={<PatientPage />}>
-                <Route index element={<PatientPage />} />
-                <Route path="*" element={<PatientPage />} />
-              </Route>
-              <Route path="/Appointment/upcoming" element={<AppointmentsPage />} />
-              <Route path="/Appointment/past" element={<AppointmentsPage />} />
-              <Route path="/Appointment/:id" element={<AppointmentDetailPage />}>
-                <Route index element={<AppointmentDetailPage />} />
-                <Route path="*" element={<AppointmentDetailPage />} />
-              </Route>
-              <Route path="/upload/:dataType" element={<UploadDataPage />} />
-              <Route path="/:resourceType" element={<SearchPage />} />
-              <Route path="/:resourceType/:id" element={<ResourcePage />}>
-                <Route index element={<ResourcePage />} />
-                <Route path="*" element={<ResourcePage />} />
-              </Route>
-            </Routes>
-          </Suspense>
-        </ErrorBoundary>
+        <BookingContext.Provider value={{ booking, setBooking }}>
+          <ErrorBoundary>
+            <Suspense fallback={<Loading />}>
+              <Routes>
+                <Route path="/" element={profile ? <Navigate to="/Schedule" /> : <LandingPage />} />
+                <Route path="/signin" element={<SignInPage />} />
+                <Route path="/Schedule" element={schedule ? <Navigate to={`/Schedule/${schedule.id}`} /> : <Loading />} />
+                <Route path="/Schedule/:id" element={schedule ? <SchedulePage /> : <Loading />} />
+                <Route path="/Patient/:id" element={<PatientPage />}>
+                  <Route index element={<PatientPage />} />
+                  <Route path="*" element={<PatientPage />} />
+                </Route>
+                <Route path="/Appointment/upcoming" element={<AppointmentsPage />} />
+                <Route path="/Appointment/past" element={<AppointmentsPage />} />
+                <Route path="/Appointment/:id" element={<AppointmentDetailPage />}>
+                  <Route index element={<AppointmentDetailPage />} />
+                  <Route path="*" element={<AppointmentDetailPage />} />
+                </Route>
+                <Route path="/upload/:dataType" element={<UploadDataPage />} />
+                <Route path="/agent" element={<PatientPickerPage />} />
+                <Route path="/agent/:patientId" element={<PatientHistoryPage />} />
+                <Route path="/agent/:patientId/doctors" element={<DoctorResultsPage />} />
+                <Route path="/agent/:patientId/doctors/:npi/slots" element={<SlotPickerPage />} />
+                <Route path="/agent/:patientId/confirmed/:apptId" element={<BookingConfirmationPage />} />
+                <Route path="/desk" element={<DoctorLookupPage />} />
+                <Route path="/desk/:npi" element={<DoctorQueuePage />} />
+                <Route path="/desk/:npi/patients/:patientId" element={<PatientAgentChatPage />} />
+                <Route path="/:resourceType" element={<SearchPage />} />
+                <Route path="/:resourceType/:id" element={<ResourcePage />}>
+                  <Route index element={<ResourcePage />} />
+                  <Route path="*" element={<ResourcePage />} />
+                </Route>
+              </Routes>
+            </Suspense>
+          </ErrorBoundary>
+        </BookingContext.Provider>
       </ScheduleContext.Provider>
     </AppShell>
   );
