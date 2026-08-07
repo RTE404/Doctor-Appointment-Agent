@@ -30,7 +30,7 @@ export function SlotPickerPage(): JSX.Element {
 
   const fetchSlots = useCallback(async (): Promise<void> => {
     if (!booking.intent) {
-      navigate(`/agent/${patientId}`);
+      navigate(`/agent/${patientId}`).catch(console.error);
       return;
     }
     setSlots(undefined);
@@ -72,12 +72,10 @@ export function SlotPickerPage(): JSX.Element {
     } catch (err) {
       setError(normalizeErrorString(err));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [medplum, patientId, npi, booking.intent, navigate]);
 
   useEffect(() => {
     fetchSlots().catch(console.error);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchSlots]);
 
   async function handlePick(slot: SlotOption): Promise<void> {
@@ -101,7 +99,7 @@ export function SlotPickerPage(): JSX.Element {
         await fetchSlots(); // actually re-fetch, not just clear-and-hope
         return;
       }
-      navigate(`/agent/${patientId}/confirmed/${result.appointment.id}`);
+      navigate(`/agent/${patientId}/confirmed/${result.appointment.id}`).catch(console.error);
     } catch (err) {
       setError(normalizeErrorString(err));
     } finally {

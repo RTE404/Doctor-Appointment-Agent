@@ -38,7 +38,7 @@ export function PatientHistoryPage(): JSX.Element {
         intent: { ...result.intent, complaintText },
         summaryCommunicationId: result.summaryCommunicationId,
       });
-      navigate(`/agent/${patientId}/doctors`);
+      navigate(`/agent/${patientId}/doctors`).catch(console.error);
     } catch (err) {
       setError(normalizeErrorString(err));
     } finally {

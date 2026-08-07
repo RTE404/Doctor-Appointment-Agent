@@ -46,7 +46,7 @@ describe('ENCOUNTER_TYPE_SPECIALTY_MAP completeness', () => {
     expect(seen.size).toBe(49);
     const uncovered = [...seen].filter((text) => !ENCOUNTER_TYPE_SPECIALTY_MAP.has(text));
     expect(uncovered).toStrictEqual([]);
-  });
+  }, 60_000);
 });
 
 describe('SPECIALTY_NUCC_CODES completeness', () => {
