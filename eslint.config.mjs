@@ -12,6 +12,7 @@ export default defineConfig(medplumEslintConfig, {
     'jsdoc/require-param': 'off',
     'jsdoc/require-returns': 'off',
     'no-nested-ternary': 'off',
+    'react-hooks/set-state-in-effect': 'off',
     curly: 'off',
     '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/no-unnecessary-boolean-literal-compare': 'off',
