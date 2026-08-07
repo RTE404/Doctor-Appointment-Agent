@@ -27,7 +27,7 @@ export function DoctorResultsPage(): JSX.Element {
 
   useEffect(() => {
     if (!booking.intent) {
-      navigate(`/agent/${patientId}`).catch(console.error);
+      Promise.resolve(navigate(`/agent/${patientId}`)).catch(console.error);
       return;
     }
     medplum
@@ -41,7 +41,7 @@ export function DoctorResultsPage(): JSX.Element {
 
   function handleSelect(candidate: Candidate): void {
     setBooking({ ...booking, chosenCandidate: candidate });
-    navigate(`/agent/${patientId}/doctors/${candidate.npi}/slots`).catch(console.error);
+    Promise.resolve(navigate(`/agent/${patientId}/doctors/${candidate.npi}/slots`)).catch(console.error);
   }
 
   return (

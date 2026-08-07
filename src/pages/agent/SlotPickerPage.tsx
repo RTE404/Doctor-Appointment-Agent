@@ -30,7 +30,7 @@ export function SlotPickerPage(): JSX.Element {
 
   const fetchSlots = useCallback(async (): Promise<void> => {
     if (!booking.intent) {
-      navigate(`/agent/${patientId}`).catch(console.error);
+      Promise.resolve(navigate(`/agent/${patientId}`)).catch(console.error);
       return;
     }
     setSlots(undefined);
@@ -99,7 +99,7 @@ export function SlotPickerPage(): JSX.Element {
         await fetchSlots(); // actually re-fetch, not just clear-and-hope
         return;
       }
-      navigate(`/agent/${patientId}/confirmed/${result.appointment.id}`).catch(console.error);
+      Promise.resolve(navigate(`/agent/${patientId}/confirmed/${result.appointment.id}`)).catch(console.error);
     } catch (err) {
       setError(normalizeErrorString(err));
     } finally {
