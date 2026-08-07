@@ -45,8 +45,10 @@ export function AppointmentActions(props: AppointmentActionsProps): JSX.Element 
 
   async function handleCancelAppointment(): Promise<void> {
     try {
-      // Call bot to cancel the appointment
-      await medplum.executeBot({ system: 'http://example.com', value: 'cancel-appointment' }, appointment);
+      // Call Medplum's native $cancel operation directly — no custom bot.
+      // Confirmed atomic (serializable transaction): cancels the Appointment
+      // and deletes its Slot(s) in one step.
+      await medplum.post(medplum.fhirUrl('Appointment', appointment.id as string, '$cancel'), {});
 
       navigate('/Appointment/upcoming')?.catch(console.error);
       showNotification({
