@@ -14,12 +14,32 @@ interface BotDescription {
 
 const Bots: BotDescription[] = [
   {
-    src: 'src/bots/core/cancel-appointment.ts',
-    dist: 'dist/bots/core/cancel-appointment.js',
-  },
-  {
     src: 'src/bots/core/block-availability.ts',
     dist: 'dist/bots/core/block-availability.js',
+  },
+  {
+    src: 'src/bots/core/reschedule-appointment.ts',
+    dist: 'dist/bots/core/reschedule-appointment.js',
+  },
+  {
+    src: 'src/bots/agent/agent-intake.ts',
+    dist: 'dist/bots/agent/agent-intake.js',
+  },
+  {
+    src: 'src/bots/agent/agent-find-doctors.ts',
+    dist: 'dist/bots/agent/agent-find-doctors.js',
+  },
+  {
+    src: 'src/bots/agent/agent-ensure-doctor.ts',
+    dist: 'dist/bots/agent/agent-ensure-doctor.js',
+  },
+  {
+    src: 'src/bots/agent/agent-book-appointment.ts',
+    dist: 'dist/bots/agent/agent-book-appointment.js',
+  },
+  {
+    src: 'src/bots/agent/agent-patient-chat.ts',
+    dist: 'dist/bots/agent/agent-patient-chat.js',
   },
 ];
 

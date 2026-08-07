@@ -163,12 +163,18 @@ function checkBotsUploaded(medplum: MedplumClient): boolean {
   const exampleBots = bots.filter(
     (bot) =>
       bot.name &&
-      ['book-appointment', 'cancel-appointment', 'set-availability', 'block-availability', 'example-data'].includes(
-        bot.name
-      )
+      [
+        'block-availability',
+        'reschedule-appointment',
+        'agent-intake',
+        'agent-find-doctors',
+        'agent-ensure-doctor',
+        'agent-book-appointment',
+        'agent-patient-chat',
+      ].includes(bot.name)
   );
 
-  if (exampleBots.length === 5) {
+  if (exampleBots.length === 7) {
     return true;
   }
   return false;
