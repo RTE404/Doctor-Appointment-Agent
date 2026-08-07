@@ -74,12 +74,22 @@ export async function handler(medplum: MedplumClient, event: BotEvent<ChatInput>
     partOf: threadId ? [{ reference: `Communication/${threadId}` }] : undefined,
   });
 
+  // Id is server-assigned (seeded via POST + ifNoneExist), never a
+  // literal — resolved the same way agent-book-appointment.ts resolves it
+  // when it reads the equivalent sender field as an authorization check.
+  const agentDevice = await medplum.searchOne('Device', {
+    identifier: 'http://example.com/agent-config|ai-appointment-agent',
+  });
+  if (!agentDevice?.id) {
+    throw new Error('The ai-appointment-agent Device is not configured');
+  }
+
   await medplum.createResource({
     resourceType: 'Communication',
     status: 'completed',
     category: [{ coding: [{ system: 'http://example.com/agent-communication-category', code: 'ai-chat' }] }],
     subject: { reference: `Patient/${patientId}` },
-    sender: { reference: 'Device/ai-appointment-agent' },
+    sender: { reference: `Device/${agentDevice.id}` },
     payload: [{ contentString: answer }],
     sent: new Date().toISOString(),
     meta: { tag: [{ code: 'ai-generated' }] },

@@ -50,13 +50,20 @@ describe('agent-book-appointment handler', () => {
       practitioner: { reference: 'Practitioner/practitioner-1' },
       specialty: [{ coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] }],
     });
-    await medplum.updateResource({ resourceType: 'HealthcareService', id: 'office-visit', active: true });
+    // Server-assigned ids (no explicit `id`) — proves the handler resolves
+    // HealthcareService/Device dynamically rather than assuming the old
+    // literal ids 'office-visit' / 'ai-appointment-agent'.
+    const officeVisit = await medplum.createResource({ resourceType: 'HealthcareService', name: 'Office Visit', active: true });
+    const agentDevice = await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
     await medplum.updateResource({
       resourceType: 'Schedule',
       id: 'schedule-1',
       active: true,
       actor: [{ reference: 'Practitioner/practitioner-1' }],
-      serviceType: [{ extension: [{ url: 'https://medplum.com/fhir/service-type-reference', valueReference: { reference: 'HealthcareService/office-visit' } }] }],
+      serviceType: [{ extension: [{ url: 'https://medplum.com/fhir/service-type-reference', valueReference: { reference: `HealthcareService/${officeVisit.id}` } }] }],
     });
     const communication = await medplum.createResource({
       resourceType: 'Communication',
@@ -66,7 +73,7 @@ describe('agent-book-appointment handler', () => {
       note: [{ text: 'My chest hurts when I run' }],
       topic: { coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] },
       subject: { reference: `Patient/${patient.id}` },
-      sender: { reference: 'Device/ai-appointment-agent' },
+      sender: { reference: `Device/${agentDevice.id}` },
       payload: [{ contentString: 'This patient reports exertional chest discomfort.' }],
       meta: { tag: [{ code: 'ai-generated' }] },
     });
@@ -138,7 +145,7 @@ describe('agent-book-appointment handler', () => {
     // ...but everything else survived the update, unlike a bare-object
     // PATCH that would have wiped these.
     expect(updatedCommunication.payload?.[0].contentString).toBe('This patient reports exertional chest discomfort.');
-    expect(updatedCommunication.sender).toStrictEqual({ reference: 'Device/ai-appointment-agent' });
+    expect(updatedCommunication.sender).toStrictEqual({ reference: `Device/${agentDevice.id}` });
     expect(updatedCommunication.category?.[0].coding?.[0].code).toBe('ai-previsit-summary');
     expect(updatedCommunication.meta?.tag).toContainEqual({ code: 'ai-generated' });
   });

@@ -28,6 +28,13 @@ describe('agent-patient-chat handler', () => {
       status: 'booked',
       participant: [{ actor: { reference: `Patient/${patient.id}` }, status: 'accepted' }, { actor: { reference: `Practitioner/${practitioner.id}` }, status: 'accepted' }],
     });
+    // Server-assigned id (no explicit `id`) — proves the handler resolves
+    // the agent Device dynamically rather than assuming the old literal id
+    // 'ai-appointment-agent'.
+    const agentDevice = await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
     __setGeminiCallerForTests(async () => 'The record shows no known allergies.');
 
     const result = await handler(medplum, {
@@ -48,7 +55,7 @@ describe('agent-patient-chat handler', () => {
     // search-parameters.json. Using 'partOf' here silently matches nothing.
     const answers = await medplum.searchResources('Communication', { 'part-of': `Communication/${result.threadId}` });
     expect(answers).toHaveLength(1);
-    expect(answers[0].sender).toStrictEqual({ reference: 'Device/ai-appointment-agent' });
+    expect(answers[0].sender).toStrictEqual({ reference: `Device/${agentDevice.id}` });
     expect(answers[0].meta?.tag).toContainEqual({ code: 'ai-generated' });
   });
 
@@ -76,6 +83,10 @@ describe('agent-patient-chat handler', () => {
       resourceType: 'Appointment',
       status: 'booked',
       participant: [{ actor: { reference: `Patient/${patient.id}` }, status: 'accepted' }, { actor: { reference: `Practitioner/${practitioner.id}` }, status: 'accepted' }],
+    });
+    await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
     });
     __setGeminiCallerForTests(async () => 'You should consider a follow-up MRI.');
 

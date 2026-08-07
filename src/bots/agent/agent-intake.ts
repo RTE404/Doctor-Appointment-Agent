@@ -59,6 +59,16 @@ export async function handler(medplum: MedplumClient, event: BotEvent<IntakeInpu
     return { needsClarification: true };
   }
 
+  // Id is server-assigned (seeded via POST + ifNoneExist), never a
+  // literal — resolved the same way agent-book-appointment.ts resolves it
+  // when it later reads this same sender field as an authorization check.
+  const agentDevice = await medplum.searchOne('Device', {
+    identifier: 'http://example.com/agent-config|ai-appointment-agent',
+  });
+  if (!agentDevice?.id) {
+    throw new Error('The ai-appointment-agent Device is not configured');
+  }
+
   const communication: Communication = await medplum.createResource({
     resourceType: 'Communication',
     status: 'preparation',
@@ -69,7 +79,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<IntakeInpu
       coding: [{ system: 'http://nucc.org/provider-taxonomy', code: specialty.nuccCode, display: specialty.label }],
     },
     subject: { reference: `Patient/${patientId}` },
-    sender: { reference: 'Device/ai-appointment-agent' },
+    sender: { reference: `Device/${agentDevice.id}` },
     payload: [{ contentString: geminiResult.summary }],
     meta: { tag: [{ code: 'ai-generated' }] },
   });

@@ -14,7 +14,11 @@ export type BookInput = {
 export type BookResult = { ok: true; appointment: Appointment } | { ok: false; reason: 'slot_taken' };
 
 const SLOT_TAKEN_MESSAGE = 'Requested time slot is not available';
-const HEALTHCARE_SERVICE_ID = 'office-visit'; // the only visit type — no urgency/triage classification exists in this product (decision recorded 2026-08-06)
+// 'Office Visit' is the only visit type — no urgency/triage classification
+// exists in this product (decision recorded 2026-08-06). Its id is NOT a
+// literal: the bootstrap bundle seeds it via POST + ifNoneExist, so the id
+// is server-assigned. Resolved dynamically in handler() below, the same
+// way ensurePractitionerAndSchedule.ts resolves it.
 
 function hasCategory(communication: Communication, code: string): boolean {
   return communication.category?.some((category) =>
@@ -79,13 +83,25 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
   const schedule = await medplum.readResource('Schedule', scheduleId);
   const summary = await medplum.readResource('Communication', summaryCommunicationId);
 
+  // Checked before resolving the agent Device below so a mismatched
+  // summary (wrong Patient/status/category/tag) fails fast without an
+  // extra round trip, and to keep this file's error message uniform
+  // regardless of which check actually failed.
   if (
     summary.status !== 'preparation' ||
     summary.subject?.reference !== `Patient/${patientId}` ||
-    summary.sender?.reference !== 'Device/ai-appointment-agent' ||
     !hasCategory(summary, 'ai-previsit-summary') ||
     !summary.meta?.tag?.some((tag) => tag.code === 'ai-generated')
   ) {
+    throw new Error('The intake Communication is not an authoritative preparation summary for this Patient');
+  }
+  // Device id is server-assigned (seeded via POST + ifNoneExist), never a
+  // literal — resolved the same way agent-intake.ts resolves it when it
+  // writes this same sender field.
+  const agentDevice = await medplum.searchOne('Device', {
+    identifier: 'http://example.com/agent-config|ai-appointment-agent',
+  });
+  if (!agentDevice?.id || summary.sender?.reference !== `Device/${agentDevice.id}`) {
     throw new Error('The intake Communication is not an authoritative preparation summary for this Patient');
   }
   const reason = summary.reasonCode?.[0]?.text;
@@ -108,8 +124,14 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
     throw new Error('The requested Practitioner does not match the intake-selected specialty');
   }
 
-  const serviceId = HEALTHCARE_SERVICE_ID;
-  await medplum.readResource('HealthcareService', serviceId);
+  // Id is server-assigned (seeded via POST + ifNoneExist), never a
+  // literal — resolved the same way ensurePractitionerAndSchedule.ts
+  // resolves it when it writes this same service onto the Schedule.
+  const officeVisit = await medplum.searchOne('HealthcareService', { name: 'Office Visit' });
+  if (!officeVisit?.id) {
+    throw new Error('The Office Visit HealthcareService is not configured');
+  }
+  const serviceId = officeVisit.id;
   if (schedule.actor?.some((actor) => actor.reference === `Practitioner/${practitionerId}`) !== true) {
     throw new Error('The Schedule does not belong to the requested Practitioner');
   }
