@@ -8,6 +8,55 @@
 
 **Tech Stack:** TypeScript 5.9, React 19, Vite 7, every `@medplum/*` package pinned to `5.1.27`, Mantine 8, react-router 7, vitest 4, `tsx` (seed CLI runtime), Google Gemini (`gemini-2.5-flash-lite`, OpenAI-compatible endpoint), NPPES public API.
 
+## Progress Log (updated 2026-08-07)
+
+**Tasks 1–25: done, committed, typechecked, tests passing.** Per-step `- [ ]`
+checkboxes inside those task sections below were never individually ticked —
+treat this log, not those checkboxes, as the source of truth for what's
+actually landed. Each task is its own commit on `main`; run
+`git log --oneline` to see them in order.
+
+| Task | Commit(s) | Note |
+|---|---|---|
+| 1 | `ab0eba5`, `190cb81` | Fork + pin 5.1.27 |
+| 2 | `c92378c`, `9dcc9e3` | Removed free-slot mechanism |
+| 3 | `e18ee0f` | Disease_Description.csv parser |
+| 4 | `1863b58` | Tiered specialty resolver |
+| 5 | `007939b` | Per-practitioner specialty scan |
+| 6 | `1e71c01` | pass2-transform (superseded by Task 10's conditional-create rewrite, see below) |
+| 7 | `4301ed0` | Chunked upload + retry |
+| 8 | `3ec5e6f` | Bootstrap bundle (HealthcareServices/Device/CodeSystem/ValueSet) |
+| 9 | `b49ebc5` | Seed CLI entry point |
+| 10 | `c00cb5d`, `5c91a30` | **Found and fixed a real blocker during live run**: Medplum restricts PUT-by-chosen-id to super-admins (`canSetId()`). Switched the whole seeder from deterministic PUT to POST+`ifNoneExist` conditional-create, and conditional references. Also added real 429-backoff (was retrying instantly into an exhausted rate-limit window). |
+| 11 | `0ec348d` | `src/config/specialties.ts` — NUCC vocabulary |
+| 12 | `e8d2779` | zip3 centroids (real Census Gazetteer data) + geo helpers |
+| 13 | `a2591d4` | Candidate ranking by distance |
+| 14 | `2db27f6` | NPPES client, incl. a real cross-state address bug fix |
+| 15 | `e682a9f` | Patient clinical-context reader |
+| 16 | `6562ead` | System prompts + output-guard |
+| 17 | `e2e2f0b` | `agent-intake` bot |
+| 18 | `84f2805` | `agent-find-doctors` bot |
+| 19 | `11066c4` | Lazy Practitioner/Schedule provisioning |
+| 20 | `bb8d486` | `agent-ensure-doctor` bot |
+| 21 | `3def198` | `agent-book-appointment` — made server-authoritative |
+| 22 | `8f36a9d` | `agent-patient-chat` bot |
+| 23 | — | Removed by design, no bot needed (see task section) |
+| 24 | `d0e1d8f` | Deleted custom cancel bot, use native `$cancel` |
+| 25 | `f474873` | `reschedule-appointment` bot — `$book` + native `$cancel` |
+
+**Recurring theme across Tasks 1–25:** several of this plan's own example
+tests/snippets didn't hold in this exact dependency setup and had to be
+corrected during implementation — MockClient's sparse default search-param
+indexing, kebab-case vs camelCase search parameter codes, `ReadablePromise`
+vs `Promise` mocking, TS generic constraint mismatches, a wrong CodeSystem
+URL, and (most substantively) Task 10's PUT-by-chosen-id blocker. Don't
+trust this plan's code blocks blindly for Tasks 26–37 either — verify
+against real Medplum source/live behavior the same way, per the pattern
+already established.
+
+**Remaining: Tasks 26–37** (frontend routes/pages for both flows, final
+deploy, and live end-to-end verification) — not started.
+
 ## Global Constraints
 
 - No Python anywhere in the live application — TypeScript only, per `Doctor_Appointment_Agent_Design.md` §2.
