@@ -22,6 +22,7 @@ medplum-scheduling-demo/
 logs
 *.log
 npm-debug.log*
+dist
 dist-ssr
 *.local
 data/core/example-bots.json
