@@ -8,9 +8,9 @@
 
 **Tech Stack:** TypeScript 5.9, React 19, Vite 7, every `@medplum/*` package pinned to `5.1.27`, Mantine 8, react-router 7, vitest 4, `tsx` (seed CLI runtime), Google Gemini (`gemini-2.5-flash-lite`, OpenAI-compatible endpoint), NPPES public API.
 
-## Progress Log (updated 2026-08-07)
+## Progress Log (updated 2026-08-09)
 
-**Tasks 1–25: done, committed, typechecked, tests passing.** Per-step `- [ ]`
+**Tasks 1–35 implementation: done and committed. Task 36: complete. Tasks 26 and 37: externally blocked.** Per-step `- [ ]`
 checkboxes inside those task sections below were never individually ticked —
 treat this log, not those checkboxes, as the source of truth for what's
 actually landed. Each task is its own commit on `main`; run
@@ -43,6 +43,18 @@ actually landed. Each task is its own commit on `main`; run
 | 23 | — | Removed by design, no bot needed (see task section) |
 | 24 | `d0e1d8f` | Deleted custom cancel bot, use native `$cancel` |
 | 25 | `f474873` | `reschedule-appointment` bot — `$book` + native `$cancel` |
+| 26 | `84e0182`, `13c9bfd` | Deployment tooling and fail-closed membership provisioning are complete; live deployment is externally blocked because the target returns `Bots not enabled` for all seven Bots. |
+| 27 | `6b53bfd` | Booking context and both route trees |
+| 28 | `e2b74c0` | Patient picker |
+| 29 | `074660b` | Patient history and complaint intake |
+| 30 | `4478c0d` | Ranked doctor results |
+| 31 | `8cf5ad0` | Slot picker and verified `$find` response handling |
+| 32 | `1a3fa87` | Booking confirmation with resilient Practitioner/NPI lookup |
+| 33 | `63523ab` | Validated ten-digit doctor NPI display filter |
+| 34 | `34ae901` | Appointment-keyed doctor queue and summary join |
+| 35 | `bcddc4e` | Guarded record-grounded doctor chat |
+| 36 | `1b1e74b` plus live run | Complete: 983/983 manifest entries and five duplicate checks each returned exactly one Practitioner. |
+| 37 | — | Externally blocked by disabled Bots; authenticated browser verification also requires a signed-in profile. See the verification report. |
 
 **Recurring theme across Tasks 1–25:** several of this plan's own example
 tests/snippets didn't hold in this exact dependency setup and had to be
@@ -54,8 +66,12 @@ trust this plan's code blocks blindly for Tasks 26–37 either — verify
 against real Medplum source/live behavior the same way, per the pattern
 already established.
 
-**Remaining: Tasks 26–37** (frontend routes/pages for both flows, final
-deploy, and live end-to-end verification) — not started.
+**Release remains blocked:** Tasks 26 and 37 require the target project's Bots
+feature to be enabled. The seed is complete, but deterministic checks also
+confirmed that sampled Synthea Practitioner identifiers under the US-NPI
+system are shorter than the ten-digit format required by `/desk`. Full
+evidence and required external actions are recorded in
+[`2026-08-07-completion-verification.md`](../reports/2026-08-07-completion-verification.md).
 
 ## Global Constraints
 
