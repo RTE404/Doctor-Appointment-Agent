@@ -2,7 +2,7 @@
 import type { MedplumClient } from '@medplum/core';
 import type { Bundle, OperationOutcome } from '@medplum/fhirtypes';
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 6;
 // Fallback wait when a transient failure carries no server-diagnosed delay
 // (e.g. a raw network timeout). A real 'throttled' outcome overrides this
 // with the exact wait Medplum's rate limiter reports (see retryDelayMs).
@@ -27,14 +27,19 @@ const TRANSIENT_ISSUE_CODES = new Set(['timeout', 'transient', 'throttled', 'loc
  */
 class BatchEntryFailureError extends Error {
   outcome?: OperationOutcome;
+  retryable: boolean;
 
-  constructor(message: string, outcome?: OperationOutcome) {
+  constructor(message: string, outcome?: OperationOutcome, retryable = false) {
     super(message);
     this.outcome = outcome;
+    this.retryable = retryable;
   }
 }
 
 function isTransient(err: unknown): boolean {
+  if (err instanceof BatchEntryFailureError && err.retryable) {
+    return true;
+  }
   if (!(err && typeof err === 'object' && 'outcome' in err)) {
     return true; // no structured outcome at all -> raw network/timeout failure
   }
@@ -73,21 +78,28 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * A `batch`-type Bundle can resolve with HTTP 200 while individual entries
- * inside it failed (4xx/5xx) — the overall request succeeding says nothing
- * about whether every entry did. `executeBatch` resolving is not evidence
- * of success; this is. (A `transaction`-type Bundle doesn't need this
- * check — Medplum's server already makes it all-or-nothing, so a partial
- * failure there surfaces as a thrown error instead.)
+ * A Bundle can resolve with HTTP 200 while individual response entries
+ * failed (4xx/5xx). This was observed live for both batch and transaction
+ * responses, so `executeBatch` resolving is never sufficient evidence of
+ * success; every response entry must be checked.
  */
 function assertNoFailedEntries(request: Bundle, response: Bundle): void {
   const failures: string[] = [];
   let transientOutcome: OperationOutcome | undefined;
+  let unresolvedConditionalReference = false;
   (response.entry ?? []).forEach((entry, i) => {
     const status = entry.response?.status;
     if (!status?.startsWith('2')) {
       const resourceType = request.entry?.[i]?.resource?.resourceType ?? 'unknown';
       const outcome = entry.response?.outcome as OperationOutcome | undefined;
+      if (
+        outcome?.issue?.some((issue) =>
+          issue.details?.text?.startsWith('Conditional reference ') &&
+          issue.details.text.endsWith(' did not match any resources')
+        )
+      ) {
+        unresolvedConditionalReference = true;
+      }
       if (!transientOutcome && outcome?.issue?.[0]?.code && TRANSIENT_ISSUE_CODES.has(outcome.issue[0].code as string)) {
         transientOutcome = outcome;
       }
@@ -98,7 +110,8 @@ function assertNoFailedEntries(request: Bundle, response: Bundle): void {
   if (failures.length > 0) {
     throw new BatchEntryFailureError(
       `Batch upload had ${failures.length} failed entr${failures.length === 1 ? 'y' : 'ies'}:\n${failures.join('\n')}`,
-      transientOutcome
+      transientOutcome,
+      unresolvedConditionalReference
     );
   }
 }
@@ -118,9 +131,7 @@ export async function uploadBundle(medplum: MedplumClient, bundle: Bundle): Prom
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await medplum.executeBatch(bundle);
-      if (bundle.type === 'batch') {
-        assertNoFailedEntries(bundle, response);
-      }
+      assertNoFailedEntries(bundle, response);
       return response;
     } catch (err) {
       lastError = err;

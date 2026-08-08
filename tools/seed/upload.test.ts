@@ -124,6 +124,95 @@ describe('uploadBundle', () => {
     expect(executeBatch).toHaveBeenCalledTimes(2);
   });
 
+  test('retries a batch when a newly-created conditional reference is not searchable yet', async () => {
+    vi.useFakeTimers();
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'batch',
+      entry: [{ resource: { resourceType: 'Encounter' }, request: { method: 'POST', url: 'Encounter' } }],
+    } as unknown as Bundle;
+    const notIndexedResponse: Bundle = {
+      resourceType: 'Bundle',
+      type: 'batch-response',
+      entry: [
+        {
+          response: {
+            status: '400',
+            outcome: {
+              resourceType: 'OperationOutcome',
+              issue: [
+                {
+                  severity: 'error',
+                  code: 'invalid',
+                  details: {
+                    text:
+                      "Conditional reference 'Practitioner?identifier=https://synthea.mitre.org/identifier|p1' did not match any resources",
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+    const okResponse: Bundle = {
+      resourceType: 'Bundle',
+      type: 'batch-response',
+      entry: [{ response: { status: '201' } }],
+    };
+    const executeBatch = vi.fn().mockResolvedValueOnce(notIndexedResponse).mockResolvedValueOnce(okResponse);
+    const medplum = { executeBatch } as any;
+
+    const resultPromise = uploadBundle(medplum, bundle);
+    const expectation = expect(resultPromise).resolves.toBe(okResponse);
+    await vi.advanceTimersByTimeAsync(500);
+    await expectation;
+    expect(executeBatch).toHaveBeenCalledTimes(2);
+  });
+
+  test('retries a transaction response with a failed throttled entry', async () => {
+    vi.useFakeTimers();
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'transaction',
+      entry: [{ resource: { resourceType: 'Practitioner' }, request: { method: 'POST', url: 'Practitioner' } }],
+    } as unknown as Bundle;
+    const throttledResponse: Bundle = {
+      resourceType: 'Bundle',
+      type: 'transaction-response',
+      entry: [
+        {
+          response: {
+            status: '429',
+            outcome: {
+              resourceType: 'OperationOutcome',
+              issue: [
+                {
+                  severity: 'error',
+                  code: 'throttled',
+                  diagnostics: JSON.stringify({ _msBeforeNext: 5000 }),
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+    const okResponse: Bundle = {
+      resourceType: 'Bundle',
+      type: 'transaction-response',
+      entry: [{ response: { status: '201' } }],
+    };
+    const executeBatch = vi.fn().mockResolvedValueOnce(throttledResponse).mockResolvedValueOnce(okResponse);
+    const medplum = { executeBatch } as any;
+
+    const resultPromise = uploadBundle(medplum, bundle);
+    const expectation = expect(resultPromise).resolves.toBe(okResponse);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expectation;
+    expect(executeBatch).toHaveBeenCalledTimes(2);
+  });
+
   test('a fully successful batch response does not throw', async () => {
     const bundle = { resourceType: 'Bundle', type: 'batch', entry: [{ resource: { resourceType: 'Condition', id: 'c1' }, request: { method: 'PUT', url: 'Condition/c1' } }] } as unknown as Bundle;
     const response: Bundle = { resourceType: 'Bundle', type: 'batch-response', entry: [{ response: { status: '200' } }] };

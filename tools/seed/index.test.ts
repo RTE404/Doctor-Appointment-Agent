@@ -1,6 +1,6 @@
 // tools/seed/index.test.ts
 import { describe, expect, test } from 'vitest';
-import { parseCliArgs } from './index';
+import { parseCliArgs, shouldCheckpointManifest } from './index';
 
 describe('parseCliArgs', () => {
   test('defaults: small limit, slim, not dry-run', () => {
@@ -23,5 +23,13 @@ describe('parseCliArgs', () => {
 
   test('--dry-run sets dryRun true', () => {
     expect(parseCliArgs(['--dry-run'])).toStrictEqual({ limit: 50, mode: 'slim', dryRun: true });
+  });
+});
+
+describe('manifest checkpointing', () => {
+  test('checkpoints every 10 completed uploads', () => {
+    expect(shouldCheckpointManifest(9)).toBe(false);
+    expect(shouldCheckpointManifest(10)).toBe(true);
+    expect(shouldCheckpointManifest(20)).toBe(true);
   });
 });

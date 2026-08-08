@@ -13,6 +13,7 @@ import { uploadPatientBundle } from './chunk-bundle';
 // ESM has no __dirname; this is the standard replacement.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MANIFEST_PATH = join(__dirname, '../../.seed-manifest.json');
+const MANIFEST_CHECKPOINT_INTERVAL = 10;
 
 export interface CliArgs {
   limit: number | undefined;
@@ -40,6 +41,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
   }
   return args;
+}
+
+export function shouldCheckpointManifest(uploaded: number): boolean {
+  return uploaded > 0 && uploaded % MANIFEST_CHECKPOINT_INTERVAL === 0;
 }
 
 /** Filenames already successfully uploaded in a prior run — lets a resumed run skip them. */
@@ -121,7 +126,7 @@ async function main(): Promise<void> {
     await uploadPatientBundle(medplum, transformed);
     alreadyUploaded.add(filePath);
     uploaded++;
-    if (uploaded % 50 === 0) {
+    if (shouldCheckpointManifest(uploaded)) {
       console.log(`  ${uploaded}/${files.length - (alreadyUploaded.size - uploaded)}`);
       saveManifest(alreadyUploaded); // checkpoint periodically, not just at the end
     }
