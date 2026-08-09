@@ -8,7 +8,6 @@ import {
   IconClipboard,
   IconDatabaseImport,
   IconMessageCircle2,
-  IconRobot,
   IconStethoscope,
   IconUser,
 } from '@tabler/icons-react';
@@ -103,7 +102,6 @@ export function App(): JSX.Element | null {
           title: 'Upload Data',
           links: [
             { icon: <IconDatabaseImport />, label: 'Upload Core ValueSets', href: '/upload/core' },
-            { icon: <IconRobot />, label: 'Upload Example Bots', href: '/upload/bots' },
           ],
         },
         {
@@ -135,7 +133,7 @@ export function App(): JSX.Element | null {
                   <Route index element={<AppointmentDetailPage />} />
                   <Route path="*" element={<AppointmentDetailPage />} />
                 </Route>
-                <Route path="/upload/:dataType" element={<UploadDataPage />} />
+                <Route path="/upload/core" element={<UploadDataPage />} />
                 <Route path="/agent" element={<PatientPickerPage />} />
                 <Route path="/agent/:patientId" element={<PatientHistoryPage />} />
                 <Route path="/agent/:patientId/doctors" element={<DoctorResultsPage />} />

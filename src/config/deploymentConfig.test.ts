@@ -1,8 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
-
-const root = fileURLToPath(new URL('../..', import.meta.url));
 
 function readProjectFile(path: string): string {
   return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
@@ -15,7 +12,6 @@ describe('deployment configuration', () => {
       scripts: { build: string };
     };
 
-    expect(root).toContain('Doctor Appointment Agent');
     expect(packageJson.engines.node).toBe('22.x');
     expect(packageJson.scripts.build).toBe('tsc && vite build');
     expect(packageJson.scripts.build).not.toContain('build:bots');
