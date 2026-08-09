@@ -150,6 +150,96 @@ describe('agent-book-appointment handler', () => {
     expect(updatedCommunication.meta?.tag).toContainEqual({ code: 'ai-generated' });
   });
 
+  test('logs only a fixed event when post-booking summary linkage fails', async () => {
+    const medplum = new MockClient();
+    await medplum.updateResource({ resourceType: 'Patient', id: 'patient-1' });
+    await medplum.updateResource({ resourceType: 'Practitioner', id: 'practitioner-1' });
+    await medplum.createResource({
+      resourceType: 'PractitionerRole',
+      practitioner: { reference: 'Practitioner/practitioner-1' },
+      specialty: [{ coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] }],
+    });
+    const officeVisit = await medplum.createResource({ resourceType: 'HealthcareService', name: 'Office Visit', active: true });
+    const agentDevice = await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
+    await medplum.updateResource({
+      resourceType: 'Schedule',
+      id: 'schedule-1',
+      active: true,
+      actor: [{ reference: 'Practitioner/practitioner-1' }],
+      serviceType: [
+        {
+          extension: [
+            {
+              url: 'https://medplum.com/fhir/service-type-reference',
+              valueReference: { reference: `HealthcareService/${officeVisit.id}` },
+            },
+          ],
+        },
+      ],
+    });
+    const communication = await medplum.createResource({
+      resourceType: 'Communication',
+      status: 'preparation',
+      category: [{ coding: [{ system: 'http://example.com/agent-communication-category', code: 'ai-previsit-summary' }] }],
+      reasonCode: [{ text: 'Chest discomfort during exercise' }],
+      note: [{ text: 'My chest hurts when I run' }],
+      topic: { coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] },
+      subject: { reference: 'Patient/patient-1' },
+      sender: { reference: `Device/${agentDevice.id}` },
+      meta: { tag: [{ code: 'ai-generated' }] },
+    });
+    const bookedAppointment: Appointment = {
+      ...PROPOSED_APPOINTMENT,
+      id: 'appt-1',
+      status: 'booked',
+      contained: undefined,
+      slot: [{ reference: 'Slot/slot-1' }],
+    };
+    const originalGet = medplum.get.bind(medplum);
+    vi.spyOn(medplum, 'get').mockImplementation((async (url: string | URL, options?: any) => {
+      if (url.toString().includes('/fhir/R4/Appointment/$find')) {
+        return { resourceType: 'Bundle', type: 'searchset', entry: [{ resource: PROPOSED_APPOINTMENT }] } as any;
+      }
+      return originalGet(url as any, options);
+    }) as any);
+    vi.spyOn(medplum, 'post').mockResolvedValue({
+      resourceType: 'Bundle',
+      type: 'transaction-response',
+      entry: [{ resource: bookedAppointment }],
+    } as any);
+    const upstreamFailure = {
+      resourceType: 'OperationOutcome',
+      issue: [{ diagnostics: 'patient-sensitive-summary-link-failure' }],
+    };
+    const originalUpdate = medplum.updateResource.bind(medplum);
+    vi.spyOn(medplum, 'updateResource').mockImplementation(((resource: any) => {
+      if (resource.resourceType === 'Communication' && resource.id === communication.id) {
+        return Promise.reject(upstreamFailure);
+      }
+      return originalUpdate(resource);
+    }) as any);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const result = await handler(medplum, {
+        bot: { reference: 'Bot/123' },
+        input: { ...BASE_INPUT, summaryCommunicationId: communication.id as string },
+        contentType: 'application/json',
+        secrets: {},
+      });
+
+      expect(result.ok).toBe(true);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith('Booking succeeded but post-booking metadata update failed');
+      expect(errorSpy).not.toHaveBeenCalledWith(expect.any(String), upstreamFailure);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   test('rejects a summary that belongs to another Patient before $find or $book', async () => {
     const medplum = new MockClient();
     await medplum.updateResource({ resourceType: 'Patient', id: 'patient-1' });

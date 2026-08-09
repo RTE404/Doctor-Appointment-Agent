@@ -203,8 +203,8 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
       status: 'completed',
       sent: new Date().toISOString(),
     });
-  } catch (err) {
-    console.error('Booking succeeded but the post-booking metadata update failed:', err);
+  } catch (_err) {
+    console.error('Booking succeeded but post-booking metadata update failed');
   }
 
   return { ok: true, appointment: bookedAppointment };
