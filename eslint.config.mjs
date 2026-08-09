@@ -4,7 +4,7 @@ import { medplumEslintConfig } from '@medplum/eslint-config';
 import { defineConfig } from 'eslint/config';
 
 export default defineConfig(medplumEslintConfig, {
-  files: ['src/**/*.{ts,tsx}'],
+  files: ['src/**/*.{ts,tsx}', 'api/**/*.ts'],
   rules: {
     'header/header': 'off',
     'import/no-duplicates': 'off',
