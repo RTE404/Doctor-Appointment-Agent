@@ -133,7 +133,7 @@ export function App(): JSX.Element | null {
                   <Route index element={<AppointmentDetailPage />} />
                   <Route path="*" element={<AppointmentDetailPage />} />
                 </Route>
-                <Route path="/upload/core" element={<UploadDataPage />} />
+                <Route path="/upload/core" element={<UploadDataPage uploadType="core" />} />
                 <Route path="/agent" element={<PatientPickerPage />} />
                 <Route path="/agent/:patientId" element={<PatientHistoryPage />} />
                 <Route path="/agent/:patientId/doctors" element={<DoctorResultsPage />} />

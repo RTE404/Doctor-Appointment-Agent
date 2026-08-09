@@ -35,6 +35,7 @@ test('legacy Bot upload remains unreachable from the Vercel POC UI', async () =>
 
   expect(appSource).not.toContain("href: '/upload/bots'");
   expect(appSource).not.toContain('path="/upload/:dataType"');
+  expect(appSource).toContain('path="/upload/core" element={<UploadDataPage uploadType="core" />}');
   expect(uploadDataSource).toContain("case 'bots'");
   expect(uploadDataSource).toContain('uploadExampleBots');
 });

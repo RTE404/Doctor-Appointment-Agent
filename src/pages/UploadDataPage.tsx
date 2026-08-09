@@ -13,14 +13,20 @@ import { useNavigate, useParams } from 'react-router';
 import coreData from '../../data/core/appointment-service-types.json';
 
 type UploadFunction = (medplum: MedplumClient, profile: Practitioner) => Promise<void>;
+type UploadDataType = 'core' | 'bots';
 
-export function UploadDataPage(): JSX.Element {
+interface UploadDataPageProps {
+  uploadType?: UploadDataType;
+}
+
+export function UploadDataPage({ uploadType }: UploadDataPageProps): JSX.Element {
   const medplum = useMedplum();
   const profile = useMedplumProfile();
   const navigate = useNavigate();
   const [pageDisabled, setPageDisabled] = useState<boolean>(false);
 
-  const { dataType } = useParams();
+  const { dataType: routeDataType } = useParams();
+  const dataType = uploadType ?? routeDataType;
   const dataTypeDisplay = dataType ? capitalize(dataType) : '';
   const buttonDisabled = dataType === 'bots' && checkBotsUploaded(medplum);
 
