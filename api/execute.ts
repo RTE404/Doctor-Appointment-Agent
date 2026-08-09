@@ -211,7 +211,8 @@ function headerValue(headers: ExecuteRequest['headers'], name: string): string |
 }
 
 function isJsonContentType(contentType: string | undefined): boolean {
-  return contentType?.toLowerCase().startsWith('application/json') === true;
+  const mediaType = contentType?.split(';', 1)[0]?.trim().toLowerCase();
+  return mediaType === 'application/json';
 }
 
 function bearerToken(authorization: string | undefined): string | undefined {

@@ -146,9 +146,20 @@ describe('handleExecuteRequest', () => {
     expect(response).toEqual({ status: 200, body: { ok: true } });
   });
 
+  test('accepts application/json with a charset parameter', async () => {
+    const response = await handleExecuteRequest(
+      request({ action: 'block-availability', input: {} }, 'Bearer valid-token', 'application/json; charset=utf-8'),
+      environment,
+      createDependencies(createHandlers().handlers)
+    );
+
+    expect(response).toEqual({ status: 200, body: { action: 'block-availability' } });
+  });
+
   test.each([
     ['missing content type', request({ action: 'agent-intake', input: {} }, 'Bearer valid-token', '')],
     ['wrong content type', request({ action: 'agent-intake', input: {} }, 'Bearer valid-token', 'text/plain')],
+    ['JSONP content type', request({ action: 'agent-intake', input: {} }, 'Bearer valid-token', 'application/jsonp')],
     ['malformed JSON', request('{', 'Bearer valid-token')],
     ['non-object body', request(['not', 'an', 'object'], 'Bearer valid-token')],
     ['non-object input', request({ action: 'agent-intake', input: [] }, 'Bearer valid-token')],
