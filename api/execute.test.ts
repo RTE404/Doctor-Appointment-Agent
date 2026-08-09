@@ -1,4 +1,6 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
   ALLOWED_ACTIONS,
@@ -21,6 +23,28 @@ const environment: ExecuteEnvironment = {
 
 const profile = { resourceType: 'Practitioner' as const, id: 'synthetic-user' };
 const medplum = { getProfileAsync: async () => profile } as unknown as MedplumClient;
+
+test('compiles the serverless runtime graph with Node ESM import semantics', () => {
+  const entrypoint = fileURLToPath(new URL('./execute.ts', import.meta.url));
+  const program = ts.createProgram([entrypoint], {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+  });
+  const diagnostics = ts.getPreEmitDiagnostics(program).map((diagnostic) => {
+    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+    if (!diagnostic.file || diagnostic.start === undefined) {
+      return message;
+    }
+    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+    return `${diagnostic.file.fileName}:${position.line + 1}:${position.character + 1} ${message}`;
+  });
+
+  expect(diagnostics).toEqual([]);
+}, 15_000);
 
 function request(body: unknown, authorization?: string, contentType = 'application/json'): ExecuteRequest {
   return {

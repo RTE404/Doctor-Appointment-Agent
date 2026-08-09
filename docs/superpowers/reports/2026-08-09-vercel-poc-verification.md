@@ -1,94 +1,82 @@
-# Vercel POC Verification — 2026-08-09
+# Vercel POC Verification — 2026-08-10
 
 ## Outcome
 
-The approved Vercel POC implementation passes the complete local gate. Deployment is **BLOCKED** before project linkage, build upload, or deployment because the required `MEDPLUM_PROJECT_ID` and `GEMINI_API_KEY` values are not available locally. No Vercel project was created or linked, no files were uploaded, and no deployment URL exists from this run.
+The Vercel POC is deployed from `main` to the linked `doctor-appointment-agent` project.
+
+- Production alias: `https://doctor-appointment-agent-rte404s-projects.vercel.app`
+- Verified deployment: `https://doctor-appointment-agent-e2t57ygk9-rte404s-projects.vercel.app`
+- Vercel inspection: `https://vercel.com/rte404s-projects/doctor-appointment-agent/7n2irAmcag9AzCPwEGRGDTh4c4pd`
+
+The serverless health endpoint, unauthenticated rejection, SPA root, and `/agent` deep link all pass through Vercel's authenticated deployment-protection bypass. Chrome also renders the current production client bundle and shows the Medplum sign-in page without a current-bundle console error.
+
+Vercel Authentication currently protects both the generated deployment URL and the production alias. Direct anonymous requests are redirected to Vercel SSO or rejected by Vercel before reaching the application. Authenticated Medplum workflow verification remains pending because the browser is waiting for user sign-in.
 
 This verification covers a synthetic-data, non-production POC only. It does not establish production healthcare, HIPAA, reliability, or multi-tenant readiness.
 
 ## Complete local gate
 
-The commands were run sequentially from repository root on `main` at `0b63e26`:
+The post-runtime-fix commands were run from the repository root on `main`:
 
 | Gate | Result | Evidence |
 |---|---|---|
+| Focused API test | PASS | 1 file and 32 tests passed, including the Node ESM runtime-graph regression. |
 | `npm run lint` | PASS | Exit 0; ESLint checked `src/` and `api/` with no findings. |
 | `npx tsc --noEmit` | PASS | Exit 0; no TypeScript diagnostics. |
-| `npm test -- --maxWorkers=1 --no-file-parallelism` | PASS | Exit 0; 31 test files passed and 142 tests passed. |
-| `npm run build` | PASS | Exit 0; TypeScript and Vite completed, 7,226 modules transformed. |
-| `git diff --check` | PASS | Exit 0; no whitespace errors. |
-| `git status --short --branch` | PASS | `main...origin/main [ahead 57]`; no changed or untracked paths. Git also printed a local global-ignore permission warning, which did not change repository status. |
+| `npm test` | PASS | Exit 0; 31 test files and 144 tests passed. |
+| Local `vercel build --prod` | PASS | Vite transformed 7,226 modules and Vercel emitted a Node 22 function plus SPA output. |
+| Emitted function import smoke test | PASS | Node imported `.vercel/output/functions/api/execute.func/api/execute.js` successfully. |
 
-The Vite output contained:
+The regression test was observed RED with 14 missing-extension diagnostics from the serverless entrypoint. The first hosted function also failed with `ERR_MODULE_NOT_FOUND` for `src/bots/core/block-availability`. Relative imports in the serverless runtime graph now use explicit `.js` specifiers, and the regression is GREEN.
 
-- `dist/index.html`: 0.49 kB, 0.32 kB gzip.
-- Main CSS: 254.21 kB, 37.61 kB gzip.
-- Main JavaScript: 1,336.22 kB, 408.29 kB gzip.
-- Build duration reported by Vite: 20.30 seconds.
+Vite continues to report the non-failing advisory that the main JavaScript chunk exceeds 500 kB after minification. The Vercel remote install also reported six dependency audit findings (one moderate, four high, one critical); dependency remediation was not part of this deployment change.
 
-Vite repeated the pre-existing, non-failing advisory that the main JavaScript chunk exceeds 500 kB after minification. This is a performance optimization item, not a failed gate. The repository also has pre-existing npm audit advisories; dependency remediation was not part of Task 5, and a fresh audit was not run after network operations were explicitly stopped.
+## Sanitized configuration evidence
 
-## Sanitized configuration readiness
+Only variable names, presence, and placeholder classification were inspected. No values were printed, copied into tracked files, or included in this report.
 
-Only variable names and presence were inspected. No values were printed, copied into tracked files, or included in this report.
-
-| Name | Local state | Deployment decision |
+| Name | Production state | Use |
 |---|---|---|
-| `MEDPLUM_BASE_URL` | Present in `.env` and `.env.defaults` | Required; available locally. |
-| `MEDPLUM_CLIENT_ID` | Present in `.env` and `.env.defaults` | Required; available locally. |
-| `MEDPLUM_PROJECT_ID` | Missing | Required; blocks upload/deployment. |
-| `GEMINI_API_KEY` | Missing; no unambiguous local Gemini-key alias exists | Required; blocks upload/deployment. |
-| `MEDPLUM_CLIENT_SECRET` | A legacy local name exists in `.env` | Explicitly prohibited for this architecture; it was not read, used, uploaded, or configured. |
+| `MEDPLUM_BASE_URL` | Present; Sensitive | Public Medplum browser base URL and server runtime configuration. |
+| `MEDPLUM_CLIENT_ID` | Present; Sensitive | Public OAuth client identifier and server runtime configuration. |
+| `MEDPLUM_PROJECT_ID` | Present; Sensitive | Server-only project authorization boundary. |
+| `GEMINI_API_KEY` | Present; Sensitive | Server-only intake/chat secret. |
+| `MEDPLUM_CLIENT_SECRET` | Not configured or used | Explicitly prohibited by this architecture. |
 
-`.seed-manifest.json` is a 983-entry seeding checkpoint array and contains no project configuration. It is not a source for `MEDPLUM_PROJECT_ID`.
+Because Vercel replaces Sensitive values with `[Sensitive]` during `vercel pull`, a local prebuilt deployment could not embed the two public Medplum values into the Vite bundle. The final deployment therefore used Vercel's remote Linux build, where the real production values were available at build time. Chrome confirmed that the resulting current bundle renders correctly.
 
-## Vercel CLI, authentication, and project state
+The repository's Node `22.x` engine intentionally overrides the linked project's `24.x` setting. Both local and remote build logs confirmed Node 22 for the function.
 
-- No local or global Vercel CLI was initially available.
-- `.vercel/project.json` is absent; the checkout is not linked to any Vercel project.
-- A transient read-only `npx vercel whoami` attempt could not finish installing/running within the allowed time and was interrupted. Authentication therefore remains unverified.
-- The interrupted probe left no `.vercel` link or deployment state.
-- Because two required values are missing, no Vercel project was created or linked and no `vercel build`, upload, preview deployment, or production deployment was attempted.
+## Upload and artifact evidence
 
-## Pre-upload source manifest evidence
+The corrected local prebuilt artifact contained 47 files and passed the following checks before the final remote build:
 
-No generated Vercel build manifest exists because the deployment prerequisites were blocked. Before any upload, the source allowlist was evaluated locally with the installed Git-ignore-compatible matcher against `.vercelignore`.
+- One `api/execute` Node 22 function and the SPA assets were present.
+- The required Medplum runtime and server handler/data closure were present.
+- No `.env`, FHIR seed, docs, tests, legacy Medplum directory, or `.seed-manifest.json` path was present.
+- No `MEDPLUM_CLIENT_SECRET` reference was present.
+- The emitted function module graph loaded successfully under Node 22.
 
-Required runtime/build material was included:
-
-- `api/execute.ts`
-- `src/api/executeAction.ts` and required runtime source under `src/`
-- `package.json` and `package-lock.json`
-- `tsconfig.json`, `vite.config.ts`, `postcss.config.mjs`, and `vercel.json`
-- `data/core/appointment-service-types.json`
-
-Excluded material was confirmed:
-
-- `.env` and other root files not explicitly allowed
-- `fhir/`
-- `docs/`, including this report
-- `.seed-manifest.json`
-- `medplum/` and `medplum-scheduling-demo/`
-- `api/**/*.test.ts` and `src/**/*.test.ts`
-- `src/scripts/`
-- extra `data/` content, including `data/core/example-bots.json`
-
-The fresh built-output name-only scan found zero matches for `MEDPLUM_CLIENT_SECRET` or `GEMINI_API_KEY`. It found `GOOGLE_CLIENT_ID__` in one generated bundle file. As established during Task 4, this is an inert placeholder embedded in the third-party `@medplum/react` 5.1.27 distribution, not an application configuration value or credential. The application has no Google public configuration.
+The final Vercel remote build uploaded 71 allowlisted source/build files, ran `npm ci`, TypeScript, Vite, and the Vercel function builder successfully, then assigned the production alias.
 
 ## Hosted endpoint verification
 
-No deployment URL exists. Every hosted check is therefore blocked, not passed.
+Checks targeted the exact final deployment through `vercel curl`, which supplied a deployment-protection bypass without exposing its value.
 
 | Check | Status | Evidence |
 |---|---|---|
-| `GET /api/execute` health response | **BLOCKED** | No deployment. |
-| `POST /api/execute` without authorization returns 401 | **BLOCKED** | No deployment. |
-| SPA root returns 200 | **BLOCKED** | No deployment. |
-| SPA deep link `/agent` returns 200 | **BLOCKED** | No deployment. |
+| `GET /api/execute` | PASS | HTTP 200; `{"ok":true,"service":"doctor-appointment-agent"}`. |
+| Allowlisted `POST /api/execute` without Authorization | PASS | HTTP 401; `{"error":"Authentication required"}`. |
+| SPA root `/` | PASS | HTTP 200 and HTML document returned. |
+| SPA deep link `/agent` | PASS | HTTP 200 and HTML document returned. |
+| Current production browser bundle | PASS | Welcome/sign-in UI rendered; current asset had no captured console errors. |
+| Direct anonymous access | PROTECTED | Vercel Authentication returns a 302 SSO redirect or Vercel-owned 401 before the app. |
+
+No tokens, authorization headers, bypass values, prompts, Gemini inputs, or patient-level content were captured.
 
 ## Authenticated live scenarios
 
-No browser authentication or synthetic live-data action was attempted because there is no deployment. The following remain **BLOCKED**:
+The browser is open at the Medplum email sign-in screen. The following synthetic scenarios remain pending until an authorized user signs in:
 
 - All seven serverless action names.
 - Synthetic complaint-to-booking flow.
@@ -99,15 +87,8 @@ No browser authentication or synthetic live-data action was attempted because th
 - Rescheduling preservation.
 - Doctor-scoped blocking.
 
-No tokens, authorization headers, prompts, Gemini inputs, or patient-level content were captured.
+## Remaining user actions
 
-## Precise next actions
-
-1. Authenticate the Vercel CLI or use the Vercel dashboard, then link this checkout to the intended personal Hobby project `doctor-appointment-agent`. Confirm no unrelated project link is overwritten.
-2. Configure `MEDPLUM_PROJECT_ID` and `GEMINI_API_KEY` through Vercel's protected environment-variable UI or a secret-safe CLI flow. Do not send raw values through chat, logs, command arguments, or tracked files.
-3. Configure the existing public `MEDPLUM_BASE_URL` and `MEDPLUM_CLIENT_ID` values for the required preview and production environments.
-4. Do **not** configure `MEDPLUM_CLIENT_SECRET`.
-5. Run `vercel build`, inspect the generated/source manifest again, and only then run the approved prebuilt preview deployment.
-6. Verify the four public checks, complete the synthetic authenticated scenario matrix using an already signed-in authorized browser profile, and deploy the verified build to production.
-
-Until those actions are completed with fresh evidence, the POC is locally verified but not hosted or live-validated.
+1. Sign in to Medplum in the open production Chrome tab, then tell Codex to continue the synthetic authenticated checks.
+2. Decide whether the POC should remain restricted to Vercel project members. If anonymous users must reach the Medplum sign-in page, change the project's Deployment Protection scope so the production domain is public.
+3. Review and schedule the reported dependency-audit findings separately; do not apply a forced audit upgrade as part of this deployment without compatibility testing.

@@ -1,9 +1,9 @@
 // src/bots/agent/lib/ensurePractitionerAndSchedule.ts
 import type { MedplumClient } from '@medplum/core';
 import type { CodeableConcept, Extension, HealthcareService, Practitioner, Schedule } from '@medplum/fhirtypes';
-import { getNppesDoctorByNpi } from './nppes';
-import type { DoctorCandidate } from './ranking';
-import { timezoneForState } from './timezones';
+import { getNppesDoctorByNpi } from './nppes.js';
+import type { DoctorCandidate } from './ranking.js';
+import { timezoneForState } from './timezones.js';
 
 const NPI_SYSTEM = 'http://hl7.org/fhir/sid/us-npi';
 const NUCC_SYSTEM = 'http://nucc.org/provider-taxonomy';

@@ -1,5 +1,5 @@
 // src/bots/agent/lib/prompts.ts
-import type { PatientClinicalContext } from './patientContext';
+import type { PatientClinicalContext } from './patientContext.js';
 
 export const INTAKE_SYSTEM_PROMPT = `You are an intake assistant for a doctor appointment booking system. Given a
 patient's clinical history and a short natural-language complaint, you must:

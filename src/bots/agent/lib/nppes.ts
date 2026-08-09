@@ -1,5 +1,5 @@
 // src/bots/agent/lib/nppes.ts
-import type { DoctorCandidate } from './ranking';
+import type { DoctorCandidate } from './ranking.js';
 
 const NPPES_BASE_URL = 'https://npiregistry.cms.hhs.gov/api/';
 

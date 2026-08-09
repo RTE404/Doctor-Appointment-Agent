@@ -1,20 +1,20 @@
 import { createReference, MedplumClient } from '@medplum/core';
 import type { BotEvent, ProfileResource } from '@medplum/core';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handler as blockAvailabilityHandler } from '../src/bots/core/block-availability';
-import type { BlockAvailabilityEvent } from '../src/bots/core/block-availability';
-import { handler as rescheduleAppointmentHandler } from '../src/bots/core/reschedule-appointment';
-import type { RescheduleInput } from '../src/bots/core/reschedule-appointment';
-import { handler as agentBookAppointmentHandler } from '../src/bots/agent/agent-book-appointment';
-import type { BookInput } from '../src/bots/agent/agent-book-appointment';
-import { handler as agentEnsureDoctorHandler } from '../src/bots/agent/agent-ensure-doctor';
-import type { EnsureDoctorInput } from '../src/bots/agent/agent-ensure-doctor';
-import { handler as agentFindDoctorsHandler } from '../src/bots/agent/agent-find-doctors';
-import type { FindDoctorsInput } from '../src/bots/agent/agent-find-doctors';
-import { handler as agentIntakeHandler } from '../src/bots/agent/agent-intake';
-import type { IntakeInput } from '../src/bots/agent/agent-intake';
-import { handler as agentPatientChatHandler } from '../src/bots/agent/agent-patient-chat';
-import type { ChatInput } from '../src/bots/agent/agent-patient-chat';
+import { handler as blockAvailabilityHandler } from '../src/bots/core/block-availability.js';
+import type { BlockAvailabilityEvent } from '../src/bots/core/block-availability.js';
+import { handler as rescheduleAppointmentHandler } from '../src/bots/core/reschedule-appointment.js';
+import type { RescheduleInput } from '../src/bots/core/reschedule-appointment.js';
+import { handler as agentBookAppointmentHandler } from '../src/bots/agent/agent-book-appointment.js';
+import type { BookInput } from '../src/bots/agent/agent-book-appointment.js';
+import { handler as agentEnsureDoctorHandler } from '../src/bots/agent/agent-ensure-doctor.js';
+import type { EnsureDoctorInput } from '../src/bots/agent/agent-ensure-doctor.js';
+import { handler as agentFindDoctorsHandler } from '../src/bots/agent/agent-find-doctors.js';
+import type { FindDoctorsInput } from '../src/bots/agent/agent-find-doctors.js';
+import { handler as agentIntakeHandler } from '../src/bots/agent/agent-intake.js';
+import type { IntakeInput } from '../src/bots/agent/agent-intake.js';
+import { handler as agentPatientChatHandler } from '../src/bots/agent/agent-patient-chat.js';
+import type { ChatInput } from '../src/bots/agent/agent-patient-chat.js';
 
 export const ALLOWED_ACTIONS = [
   'block-availability',

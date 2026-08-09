@@ -1,9 +1,9 @@
 // src/bots/agent/agent-intake.ts
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import type { Communication } from '@medplum/fhirtypes';
-import { normalizeLlmSpecialty } from '../../config/specialties';
-import { loadPatientClinicalContext } from './lib/patientContext';
-import { INTAKE_SYSTEM_PROMPT, buildIntakeUserPrompt } from './lib/prompts';
+import { normalizeLlmSpecialty } from '../../config/specialties.js';
+import { loadPatientClinicalContext } from './lib/patientContext.js';
+import { INTAKE_SYSTEM_PROMPT, buildIntakeUserPrompt } from './lib/prompts.js';
 
 interface GeminiIntakeResult {
   specialty: string;

@@ -1,11 +1,11 @@
 // src/bots/agent/agent-find-doctors.ts
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import type { Encounter, Practitioner, PractitionerRole } from '@medplum/fhirtypes';
-import { SPECIALTY_TABLE } from '../../config/specialties';
-import { patientCoords } from './lib/geo';
-import { rankCandidates } from './lib/ranking';
-import type { DoctorCandidate, RankedCandidate } from './lib/ranking';
-import { searchNppesDoctors } from './lib/nppes';
+import { SPECIALTY_TABLE } from '../../config/specialties.js';
+import { patientCoords } from './lib/geo.js';
+import { rankCandidates } from './lib/ranking.js';
+import type { DoctorCandidate, RankedCandidate } from './lib/ranking.js';
+import { searchNppesDoctors } from './lib/nppes.js';
 
 export type FindDoctorsInput = { patientId: string; specialtyCode: string };
 export type FoundCandidate = (RankedCandidate | DoctorCandidate) & {

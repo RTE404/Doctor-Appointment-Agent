@@ -1,5 +1,5 @@
 // src/bots/agent/lib/ranking.ts
-import { haversineMiles, zip3Centroid } from './geo';
+import { haversineMiles, zip3Centroid } from './geo.js';
 
 export interface DoctorCandidate {
   npi: string;

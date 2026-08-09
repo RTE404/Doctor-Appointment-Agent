@@ -1,6 +1,6 @@
 // src/bots/agent/lib/geo.ts
 import type { Patient } from '@medplum/fhirtypes';
-import { ZIP3_CENTROIDS } from '../../../data/zip3-centroids';
+import { ZIP3_CENTROIDS } from '../../../data/zip3-centroids.js';
 
 const EARTH_RADIUS_MILES = 3958.8;
 const GEOLOCATION_EXT_URL = 'http://hl7.org/fhir/StructureDefinition/geolocation';

@@ -1,7 +1,7 @@
 // src/bots/agent/agent-patient-chat.ts
 import type { BotEvent, MedplumClient } from '@medplum/core';
-import { loadPatientClinicalContext } from './lib/patientContext';
-import { CHAT_SYSTEM_PROMPT, buildChatUserPrompt, containsInterpretationLanguage } from './lib/prompts';
+import { loadPatientClinicalContext } from './lib/patientContext.js';
+import { CHAT_SYSTEM_PROMPT, buildChatUserPrompt, containsInterpretationLanguage } from './lib/prompts.js';
 
 const REFUSAL =
   "I can only relay information from the patient's record — for clinical interpretation, please consult the record directly.";
