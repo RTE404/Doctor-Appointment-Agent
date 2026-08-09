@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run build:bots && tsc && vite build",
+    "build": "tsc && vite build",
     "build:bots": "npm run clean && tsc && node --no-warnings esbuild-script.mjs && tsx src/scripts/deploy-bots.ts",
     "clean": "rimraf dist data/core/example-bots.json",
     "dev": "vite",
@@ -58,6 +58,6 @@
   },
   "packageManager": "npm@10.9.4",
   "engines": {
-    "node": "^22.18.0 || >=24.2.0"
+    "node": "22.x"
   }
 }
