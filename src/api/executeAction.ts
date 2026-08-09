@@ -13,7 +13,7 @@ const INVALID_RESPONSE_MESSAGE = 'The appointment service returned an invalid re
 const NETWORK_FAILURE_MESSAGE = 'Unable to reach the appointment service.';
 const UNKNOWN_ERROR_MESSAGE = 'The request could not be processed.';
 
-export async function executeAction<TInput extends Record<string, unknown>, TResult>(
+export async function executeAction<TInput extends object, TResult>(
   medplum: MedplumClient,
   action: ActionName,
   input: TInput,

@@ -11,12 +11,9 @@ import { useNavigate, useParams } from 'react-router';
 import { SlotGrid } from '../../components/agent/SlotGrid';
 import type { SlotOption } from '../../components/agent/SlotGrid';
 import { BookingContext } from '../../booking.context';
-
-interface EnsureDoctorResult {
-  practitionerId: string;
-  scheduleId: string;
-  healthcareServiceId: string;
-}
+import { executeAction } from '../../api/executeAction';
+import type { BookInput, BookResult } from '../../bots/agent/agent-book-appointment';
+import type { EnsureDoctorInput, EnsureDoctorResult } from '../../bots/agent/agent-ensure-doctor';
 
 export function SlotPickerPage(): JSX.Element {
   const { patientId, npi } = useParams();
@@ -36,10 +33,8 @@ export function SlotPickerPage(): JSX.Element {
     setSlots(undefined);
     setError(undefined);
     try {
-      const provisioned: EnsureDoctorResult = await medplum.executeBot(
-        { system: 'http://example.com', value: 'agent-ensure-doctor' },
-        { npi }
-      );
+      const input: EnsureDoctorInput = { npi: npi as string };
+      const provisioned = await executeAction<EnsureDoctorInput, EnsureDoctorResult>(medplum, 'agent-ensure-doctor', input);
       setProvisioned(provisioned);
       const healthcareServiceId = provisioned.healthcareServiceId;
       const start = dayjs().add(1, 'day').startOf('day').toISOString();
@@ -83,17 +78,15 @@ export function SlotPickerPage(): JSX.Element {
     setBookingInFlight(true);
     setError(undefined);
     try {
-      const result = await medplum.executeBot(
-        { system: 'http://example.com', value: 'agent-book-appointment' },
-        {
-          patientId,
-          practitionerId: provisioned.practitionerId,
-          scheduleId: provisioned.scheduleId,
-          start: slot.start,
-          end: slot.end,
-          summaryCommunicationId: booking.summaryCommunicationId,
-        }
-      );
+      const input: BookInput = {
+        patientId: patientId as string,
+        practitionerId: provisioned.practitionerId,
+        scheduleId: provisioned.scheduleId,
+        start: slot.start,
+        end: slot.end,
+        summaryCommunicationId: booking.summaryCommunicationId,
+      };
+      const result = await executeAction<BookInput, BookResult>(medplum, 'agent-book-appointment', input);
       if (!result.ok) {
         setError('That slot was just taken — please pick another.');
         await fetchSlots(); // actually re-fetch, not just clear-and-hope

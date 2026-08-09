@@ -9,11 +9,8 @@ import { useParams } from 'react-router';
 import { AgentChat } from '../../components/desk/AgentChat';
 import type { ChatTurn } from '../../components/desk/chatModel';
 import { isValidNpi } from './doctorLookup';
-
-interface ChatBotResult {
-  answer: string;
-  threadId: string;
-}
+import { executeAction } from '../../api/executeAction';
+import type { ChatInput, ChatResult } from '../../bots/agent/agent-patient-chat';
 
 export function PatientAgentChatPage(): JSX.Element {
   const { npi, patientId } = useParams();
@@ -34,10 +31,8 @@ export function PatientAgentChatPage(): JSX.Element {
 
     setError(undefined);
     try {
-      const result: ChatBotResult = await medplum.executeBot(
-        { system: 'http://example.com', value: 'agent-patient-chat' },
-        { npi, patientId, question, threadId }
-      );
+      const input: ChatInput = { npi, patientId, question, threadId };
+      const result = await executeAction<ChatInput, ChatResult>(medplum, 'agent-patient-chat', input);
       setThreadId(result.threadId);
       setTurns((previous) => [...previous, { question, answer: result.answer }]);
     } catch (err) {

@@ -38,9 +38,6 @@ export function UploadDataPage(): JSX.Element {
       case 'bots':
         uploadFunction = uploadExampleBots;
         break;
-      case 'example':
-        uploadFunction = uploadExampleData;
-        break;
       default:
         throw new Error(`Invalid upload type: ${dataType}`);
     }
@@ -178,25 +175,4 @@ function checkBotsUploaded(medplum: MedplumClient): boolean {
     return true;
   }
   return false;
-}
-
-async function uploadExampleData(medplum: MedplumClient, profile: Practitioner): Promise<void> {
-  // Unlike the other bundles, which source data from JSON files, this example data bundle is
-  // provided by a bot to handle dynamic content.
-  const batch: Bundle = await medplum.executeBot({ system: 'http://example.com', value: 'example-data' }, profile);
-  const result = await medplum.executeBatch(batch);
-
-  if (result.entry?.every((entry) => entry.response?.outcome && isOk(entry.response?.outcome))) {
-    setTimeout(
-      () =>
-        showNotification({
-          icon: <IconCircleCheck />,
-          title: 'Success',
-          message: 'Uploaded Example Data',
-        }),
-      1000
-    );
-  } else {
-    throw new Error('Error uploading example data');
-  }
 }

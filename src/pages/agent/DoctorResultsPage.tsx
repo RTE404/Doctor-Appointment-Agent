@@ -8,6 +8,8 @@ import { useContext, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { DoctorCard } from '../../components/agent/DoctorCard';
 import { BookingContext } from '../../booking.context';
+import { executeAction } from '../../api/executeAction';
+import type { FindDoctorsInput, FindDoctorsResult } from '../../bots/agent/agent-find-doctors';
 
 interface Candidate {
   npi: string;
@@ -30,11 +32,8 @@ export function DoctorResultsPage(): JSX.Element {
       Promise.resolve(navigate(`/agent/${patientId}`)).catch(console.error);
       return;
     }
-    medplum
-      .executeBot(
-        { system: 'http://example.com', value: 'agent-find-doctors' },
-        { patientId, specialtyCode: booking.intent.specialtyCode }
-      )
+    const input: FindDoctorsInput = { patientId: patientId as string, specialtyCode: booking.intent.specialtyCode };
+    executeAction<FindDoctorsInput, FindDoctorsResult>(medplum, 'agent-find-doctors', input)
       .then((result) => setCandidates(result.candidates))
       .catch((err) => setError(normalizeErrorString(err)));
   }, [medplum, patientId, booking.intent, navigate]);

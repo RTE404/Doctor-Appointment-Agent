@@ -3,7 +3,7 @@
 import { Modal } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { createReference, getQuestionnaireAnswers, normalizeErrorString } from '@medplum/core';
-import type { Questionnaire, QuestionnaireResponse, Reference, Schedule, Slot } from '@medplum/fhirtypes';
+import type { Bundle, Questionnaire, QuestionnaireResponse, Reference, Schedule, Slot } from '@medplum/fhirtypes';
 import { Loading, QuestionnaireForm, useMedplum } from '@medplum/react';
 import { IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
 import { useContext } from 'react';
@@ -11,6 +11,7 @@ import type { JSX } from 'react';
 import type { Event } from 'react-big-calendar';
 import { ScheduleContext } from '../../Schedule.context';
 import type { BlockAvailabilityEvent } from '../../bots/core/block-availability';
+import { executeAction } from '../../api/executeAction';
 
 interface CreateUpdateSlotProps {
   event: Event | undefined;
@@ -61,7 +62,7 @@ export function CreateUpdateSlot(props: CreateUpdateSlotProps): JSX.Element {
           start,
           end,
         };
-        await medplum.executeBot({ system: 'http://example.com', value: 'block-availability' }, input);
+        await executeAction<BlockAvailabilityEvent, Bundle>(medplum, 'block-availability', input);
       }
 
       onSlotsUpdated();

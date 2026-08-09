@@ -3,12 +3,13 @@
 import { Modal } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { createReference, getQuestionnaireAnswers, normalizeErrorString } from '@medplum/core';
-import type { Questionnaire, QuestionnaireResponse, Schedule } from '@medplum/fhirtypes';
+import type { Bundle, Questionnaire, QuestionnaireResponse, Schedule } from '@medplum/fhirtypes';
 import { Loading, QuestionnaireForm, useMedplum } from '@medplum/react';
 import { IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
 import { useContext } from 'react';
 import type { JSX } from 'react';
 import type { BlockAvailabilityEvent } from '../../bots/core/block-availability';
+import { executeAction } from '../../api/executeAction';
 import { ScheduleContext } from '../../Schedule.context';
 
 interface BlockAvailabilityProps {
@@ -40,7 +41,7 @@ export function BlockAvailability(props: BlockAvailabilityProps): JSX.Element {
         start: answers['start-date'].valueDateTime as string,
         end: answers['end-date'].valueDateTime as string,
       };
-      await medplum.executeBot({ system: 'http://example.com', value: 'block-availability' }, input);
+      await executeAction<BlockAvailabilityEvent, Bundle>(medplum, 'block-availability', input);
 
       showNotification({
         icon: <IconCircleCheck />,

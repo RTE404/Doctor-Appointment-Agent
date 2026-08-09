@@ -8,6 +8,8 @@ import { QuestionnaireForm, useMedplum } from '@medplum/react';
 import { IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router';
+import { executeAction } from '../../api/executeAction';
+import type { RescheduleInput, RescheduleResult } from '../../bots/core/reschedule-appointment';
 
 interface RescheduleAppointmentProps {
   appointment: Appointment;
@@ -29,13 +31,20 @@ export function RescheduleAppointment(props: RescheduleAppointmentProps): JSX.El
     const startDateTime = answers['start-date'].valueDateTime as string;
     const endDateTime = answers['end-date'].valueDateTime as string;
 
+    if (!appointment.id) {
+      showNotification({
+        icon: <IconCircleOff />,
+        title: 'Error',
+        message: 'Unable to reschedule an appointment without an ID.',
+      });
+      return;
+    }
+
     try {
       // Native $book + $cancel round trip, with real availability checking —
       // no custom bot; see AppointmentActions.tsx's $cancel for the same shift.
-      const result = await medplum.executeBot(
-        { system: 'http://example.com', value: 'reschedule-appointment' },
-        { appointmentId: appointment.id, newStart: startDateTime, newEnd: endDateTime }
-      );
+      const input: RescheduleInput = { appointmentId: appointment.id, newStart: startDateTime, newEnd: endDateTime };
+      const result = await executeAction<RescheduleInput, RescheduleResult>(medplum, 'reschedule-appointment', input);
 
       if (!result.ok) {
         showNotification({

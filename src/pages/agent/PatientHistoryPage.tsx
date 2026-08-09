@@ -10,6 +10,8 @@ import { ComplaintForm } from '../../components/agent/ComplaintForm';
 import { IntentCard } from '../../components/agent/IntentCard';
 import { EncounterHistoryList } from '../../components/agent/EncounterHistoryList';
 import { BookingContext } from '../../booking.context';
+import { executeAction } from '../../api/executeAction';
+import type { IntakeInput, IntakeResult } from '../../bots/agent/agent-intake';
 
 export function PatientHistoryPage(): JSX.Element {
   const { patientId } = useParams();
@@ -25,10 +27,8 @@ export function PatientHistoryPage(): JSX.Element {
     setError(undefined);
     setNeedsClarification(false);
     try {
-      const result = await medplum.executeBot(
-        { system: 'http://example.com', value: 'agent-intake' },
-        { patientId, complaintText }
-      );
+      const input: IntakeInput = { patientId: patientId as string, complaintText };
+      const result = await executeAction<IntakeInput, IntakeResult>(medplum, 'agent-intake', input);
       if ('needsClarification' in result) {
         setNeedsClarification(true);
         return;
