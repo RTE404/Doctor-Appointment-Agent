@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Alert, Loader, Stack, Title } from '@mantine/core';
 import { normalizeErrorString } from '@medplum/core';
-import type { Appointment, Communication, Patient, Practitioner } from '@medplum/fhirtypes';
 import { Document, useMedplum } from '@medplum/react';
 import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { QueueTable } from '../../components/desk/QueueTable';
 import { isValidNpi } from './doctorLookup';
-import { buildQueueEntries } from './doctorQueue';
+import { loadDoctorQueueEntries } from './doctorQueue';
 import type { QueueEntry } from './doctorQueue';
 
 export function DoctorQueuePage(): JSX.Element {
@@ -26,34 +25,7 @@ export function DoctorQueuePage(): JSX.Element {
     }
 
     async function load(): Promise<void> {
-      const practitioner: Practitioner | undefined = await medplum.searchOne('Practitioner', {
-        identifier: `http://hl7.org/fhir/sid/us-npi|${npi}`,
-      });
-      if (!practitioner?.id) {
-        setEntries([]);
-        return;
-      }
-
-      const practitionerReference = `Practitioner/${practitioner.id}`;
-      const [appointments, summaries]: [Appointment[], Communication[]] = await Promise.all([
-        medplum.searchResources('Appointment', { actor: practitionerReference, _sort: '-date' }),
-        medplum.searchResources('Communication', {
-          recipient: practitionerReference,
-          category: 'ai-previsit-summary',
-        }),
-      ]);
-      const patientIds = [
-        ...new Set(
-          appointments.flatMap((appointment) =>
-            appointment.participant
-              .map((participant) => participant.actor?.reference)
-              .filter((reference): reference is string => reference?.startsWith('Patient/') === true)
-              .map((reference) => reference.split('/')[1])
-          )
-        ),
-      ];
-      const patients: Patient[] = await Promise.all(patientIds.map((patientId) => medplum.readResource('Patient', patientId)));
-      setEntries(buildQueueEntries(appointments, summaries, patients));
+      setEntries(await loadDoctorQueueEntries(medplum, npi));
     }
 
     load().catch((err) => setError(normalizeErrorString(err)));

@@ -1,8 +1,20 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import type { Appointment, Communication, Patient } from '@medplum/fhirtypes';
-import { describe, expect, test } from 'vitest';
-import { buildQueueEntries } from './doctorQueue';
+import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
+import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
+import type { Appointment, Bundle, Communication, Patient, SearchParameter } from '@medplum/fhirtypes';
+import { MockClient } from '@medplum/mock';
+import { beforeAll, describe, expect, test } from 'vitest';
+import { buildQueueEntries, loadDoctorQueueEntries } from './doctorQueue';
+
+beforeAll(() => {
+  indexStructureDefinitionBundle(readJson('fhir/r4/profiles-types.json') as Bundle);
+  indexStructureDefinitionBundle(readJson('fhir/r4/profiles-resources.json') as Bundle);
+  indexStructureDefinitionBundle(readJson('fhir/r4/profiles-medplum.json') as Bundle);
+  for (const filename of SEARCH_PARAMETER_BUNDLE_FILES) {
+    indexSearchParameterBundle(readJson(filename) as Bundle<SearchParameter>);
+  }
+});
 
 describe('doctor queue resource join', () => {
   test('keeps separate appointments and joins each summary by Communication.about', () => {
@@ -84,5 +96,75 @@ describe('doctor queue resource join', () => {
     ];
 
     expect(buildQueueEntries(appointments, [], [])).toStrictEqual([]);
+  });
+
+  test('loads an appointment attached to any Practitioner sharing the NPI', async () => {
+    const medplum = new MockClient();
+    await medplum.createResource({
+      resourceType: 'Practitioner',
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+    });
+    const relationshipPractitioner = await medplum.createResource({
+      resourceType: 'Practitioner',
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+    });
+    const patient = await medplum.createResource({
+      resourceType: 'Patient',
+      name: [{ given: ['Ada'], family: 'Lovelace' }],
+    });
+    const appointment = await medplum.createResource({
+      resourceType: 'Appointment',
+      status: 'booked',
+      start: '2026-08-11T13:00:00Z',
+      description: 'Follow-up visit',
+      participant: [
+        { actor: { reference: `Patient/${patient.id}` }, status: 'accepted' },
+        { actor: { reference: `Practitioner/${relationshipPractitioner.id}` }, status: 'accepted' },
+      ],
+    });
+    await medplum.createResource({
+      resourceType: 'Communication',
+      status: 'completed',
+      category: [{ coding: [{ code: 'ai-previsit-summary' }] }],
+      recipient: [{ reference: `Practitioner/${relationshipPractitioner.id}` }],
+      about: [{ reference: `Appointment/${appointment.id}` }],
+      payload: [{ contentString: 'Prepared summary' }],
+    });
+
+    const entries = await loadDoctorQueueEntries(medplum, '1234567890');
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      appointmentId: appointment.id,
+      patientId: patient.id,
+      summary: 'Prepared summary',
+    });
+  });
+
+  test('deduplicates an appointment returned for multiple matching Practitioners', async () => {
+    const medplum = new MockClient();
+    const firstPractitioner = await medplum.createResource({
+      resourceType: 'Practitioner',
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+    });
+    const secondPractitioner = await medplum.createResource({
+      resourceType: 'Practitioner',
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+    });
+    const patient = await medplum.createResource({ resourceType: 'Patient' });
+    const appointment = await medplum.createResource({
+      resourceType: 'Appointment',
+      status: 'booked',
+      participant: [
+        { actor: { reference: `Patient/${patient.id}` }, status: 'accepted' },
+        { actor: { reference: `Practitioner/${firstPractitioner.id}` }, status: 'accepted' },
+        { actor: { reference: `Practitioner/${secondPractitioner.id}` }, status: 'accepted' },
+      ],
+    });
+
+    const entries = await loadDoctorQueueEntries(medplum, '1234567890');
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].appointmentId).toBe(appointment.id);
   });
 });
