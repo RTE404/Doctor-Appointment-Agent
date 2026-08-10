@@ -2,6 +2,7 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import { loadCompletePatientContext } from './lib/completePatientContext.js';
 import { CHAT_SYSTEM_PROMPT, buildChatUserPrompt, containsInterpretationLanguage } from './lib/prompts.js';
+import { buildGeminiChatCompletionBody } from './lib/geminiRequest.js';
 
 const REFUSAL =
   "I can only relay information from the patient's record — for clinical interpretation, please consult the record directly.";
@@ -21,14 +22,7 @@ async function callGeminiForChat(apiKey: string, systemPrompt: string, userPromp
   const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gemini-2.5-flash-lite',
-      temperature: 0,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }),
+    body: JSON.stringify(buildGeminiChatCompletionBody(systemPrompt, userPrompt)),
   });
   if (!response.ok) {
     throw new Error(`Gemini request failed: ${response.status}`);

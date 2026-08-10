@@ -4,6 +4,7 @@ import type { Communication } from '@medplum/fhirtypes';
 import { normalizeLlmSpecialty } from '../../config/specialties.js';
 import { loadPatientClinicalContext } from './lib/patientContext.js';
 import { INTAKE_SYSTEM_PROMPT, buildIntakeUserPrompt } from './lib/prompts.js';
+import { buildGeminiChatCompletionBody } from './lib/geminiRequest.js';
 
 interface GeminiIntakeResult {
   specialty: string;
@@ -29,15 +30,7 @@ async function callGeminiForIntake(apiKey: string, systemPrompt: string, userPro
   const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gemini-2.5-flash-lite',
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }),
+    body: JSON.stringify(buildGeminiChatCompletionBody(systemPrompt, userPrompt, { jsonResponse: true })),
   });
   if (!response.ok) {
     throw new Error(`Gemini request failed: ${response.status}`);
