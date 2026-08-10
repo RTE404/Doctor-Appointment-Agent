@@ -41,8 +41,10 @@ export async function handler(medplum: MedplumClient, event: BotEvent<ChatInput>
   const { npi, patientId, question, threadId } = event.input;
   const apiKey = event.secrets['GEMINI_API_KEY']?.valueString as string;
 
-  const practitioner = await medplum.searchOne('Practitioner', { identifier: `http://hl7.org/fhir/sid/us-npi|${npi}` });
-  if (!practitioner) {
+  const practitioners = await medplum.searchResources('Practitioner', {
+    identifier: `http://hl7.org/fhir/sid/us-npi|${npi}`,
+  });
+  if (practitioners.length === 0) {
     throw new Error(`No Practitioner found for NPI ${npi}`);
   }
 
@@ -50,11 +52,22 @@ export async function handler(medplum: MedplumClient, event: BotEvent<ChatInput>
   // display filter, per Design §11), but "has this NPI ever actually
   // booked with this patient" is a fact worth checking before answering,
   // and was simply absent before.
-  const relationship = await medplum.searchOne('Appointment', {
-    actor: `Practitioner/${practitioner.id}`,
-    patient: `Patient/${patientId}`,
-  });
-  if (!relationship) {
+  let practitionerReference: string | undefined;
+  for (const practitioner of practitioners) {
+    if (!practitioner.id) {
+      continue;
+    }
+    const candidateReference = `Practitioner/${practitioner.id}`;
+    const relationship = await medplum.searchOne('Appointment', {
+      actor: candidateReference,
+      patient: `Patient/${patientId}`,
+    });
+    if (relationship) {
+      practitionerReference = candidateReference;
+      break;
+    }
+  }
+  if (!practitionerReference) {
     throw new Error(`No booking relationship between NPI ${npi} and patient ${patientId}`);
   }
 
@@ -68,7 +81,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<ChatInput>
     status: 'completed',
     category: [{ coding: [{ system: 'http://example.com/agent-communication-category', code: 'ai-chat' }] }],
     subject: { reference: `Patient/${patientId}` },
-    sender: { reference: `Practitioner/${practitioner.id}` },
+    sender: { reference: practitionerReference },
     payload: [{ contentString: question }],
     sent: new Date().toISOString(),
     partOf: threadId ? [{ reference: `Communication/${threadId}` }] : undefined,

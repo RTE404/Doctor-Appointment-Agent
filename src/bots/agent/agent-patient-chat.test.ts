@@ -75,6 +75,42 @@ describe('agent-patient-chat handler', () => {
     ).rejects.toThrow(/no booking relationship/i);
   });
 
+  test('uses the Practitioner that owns the patient relationship when an NPI is duplicated', async () => {
+    const medplum = new MockClient();
+    const patient = await medplum.createResource({ resourceType: 'Patient' });
+    await medplum.createResource({
+      resourceType: 'Practitioner',
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+    });
+    const relationshipPractitioner = await medplum.createResource({
+      resourceType: 'Practitioner',
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+    });
+    await medplum.createResource({
+      resourceType: 'Appointment',
+      status: 'booked',
+      participant: [
+        { actor: { reference: `Patient/${patient.id}` }, status: 'accepted' },
+        { actor: { reference: `Practitioner/${relationshipPractitioner.id}` }, status: 'accepted' },
+      ],
+    });
+    await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
+    __setGeminiCallerForTests(async () => 'The record shows no known allergies.');
+
+    const result = await handler(medplum, {
+      bot: { reference: 'Bot/123' },
+      input: { npi: '1234567890', patientId: patient.id as string, question: 'Any known allergies?' },
+      contentType: 'application/json',
+      secrets: { GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: 'test-key' } },
+    });
+
+    const question = await medplum.readResource('Communication', result.threadId);
+    expect(question.sender).toStrictEqual({ reference: `Practitioner/${relationshipPractitioner.id}` });
+  });
+
   test('substitutes the fixed refusal when the model answer contains interpretation language', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
