@@ -23,9 +23,10 @@ export function DoctorQueuePage(): JSX.Element {
     if (!npi || !isValidNpi(npi)) {
       return;
     }
+    const doctorNpi = npi;
 
     async function load(): Promise<void> {
-      setEntries(await loadDoctorQueueEntries(medplum, npi));
+      setEntries(await loadDoctorQueueEntries(medplum, doctorNpi));
     }
 
     load().catch((err) => setError(normalizeErrorString(err)));
