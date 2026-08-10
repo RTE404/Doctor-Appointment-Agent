@@ -158,6 +158,40 @@ describe('buildChatUserPrompt', () => {
     expect(prompt).toContain('"birthDate": "1990"');
     expect(prompt).toContain('"ageYears": null');
   });
+
+  test('rejects an over-budget final prompt instead of returning truncated patient data', () => {
+    const patient: Patient = { resourceType: 'Patient', id: 'patient-1', name: [{ text: 'Sensitive Patient' }] };
+    let thrown: unknown;
+
+    try {
+      buildChatUserPrompt(
+        { patient, resources: [patient] },
+        'Sensitive question marker',
+        new Date('2026-08-10T00:00:00.000Z'),
+        64
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe('Complete patient chat prompt exceeded the byte limit');
+    expect((thrown as Error).message).not.toContain('Sensitive Patient');
+    expect((thrown as Error).message).not.toContain('Sensitive question marker');
+  });
+
+  test('measures the final prompt budget in UTF-8 bytes rather than string code units', () => {
+    const patient: Patient = { resourceType: 'Patient', id: 'patient-1' };
+
+    expect(() =>
+      buildChatUserPrompt(
+        { patient, resources: [patient] },
+        'é',
+        new Date('2026-08-10T00:00:00.000Z'),
+        664
+      )
+    ).toThrow('Complete patient chat prompt exceeded the byte limit');
+  });
 });
 
 describe('system prompts', () => {
@@ -165,8 +199,18 @@ describe('system prompts', () => {
     expect(INTAKE_SYSTEM_PROMPT.toLowerCase()).toContain('never diagnose');
   });
 
-  test('chat prompt instructs relay-only behavior and a fixed refusal', () => {
+  test('chat prompt binds direct lookup to one selected record and requires the exact broad refusal', () => {
     expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain('never diagnose');
+    expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain('interpret findings');
+    expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain('suggest treatment or medication changes');
+    expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain('give a prognosis');
+    expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain('any other form of clinical advice');
+    expect(CHAT_SYSTEM_PROMPT).toContain('complete available record for exactly one selected patient');
+    expect(CHAT_SYSTEM_PROMPT).toContain('direct record lookup only');
+    expect(CHAT_SYSTEM_PROMPT).toContain(
+      'If asked for any of that, respond exactly with:\n' +
+        '"I can only relay information from the patient\'s record \u2014 for clinical interpretation, please consult the record directly."'
+    );
     expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain('not recorded');
   });
 });
