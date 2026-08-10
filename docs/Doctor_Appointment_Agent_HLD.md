@@ -257,14 +257,18 @@ a deployment.
 
 ## 9. Assumptions & Constraints
 
-- Single local user at a time per role (one patient session, one doctor
-  session) — not a multi-tenant service.
+- One signed-in demo operator at a time — not a multi-tenant service. The
+  Medplum login grants project access and is never treated as a doctor or
+  `Practitioner` identity.
 - English-only natural-language input, on both the patient complaint and
   the doctor's chat questions.
 - US doctors only (NPPES is a US national registry).
-- **NPI entry on `/desk` is a display filter, not authentication** — an
-  explicit, deliberate scope decision (see Design doc §11), not an
-  oversight.
+- **NPI entry on `/desk` is a display filter, not authentication or an
+  identity claim** — an explicit, deliberate scope decision (see Design
+  doc §11), not an oversight.
+- Practitioner-owned `My Schedule` and `My Appointments` views are retired;
+  their legacy routes redirect to `/agent` when signed in and `/` when
+  signed out. Individual appointment detail actions remain available.
 - No SLAs, load targets, or scaling design — out of scope for a POC.
 
 ## 10. Non-Functional Considerations (explicitly out of scope for this POC)

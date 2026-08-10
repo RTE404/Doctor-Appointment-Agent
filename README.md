@@ -1,14 +1,19 @@
-<h1 align="center">Medplum Scheduling Demo</h1>
-<p align="center">A starter application for building a scheduling app on Medplum.</p>
+<h1 align="center">Doctor Appointment Agent</h1>
+<p align="center">A synthetic patient-booking and doctor-desk POC built on Medplum.</p>
 <p align="center">
 <a href="https://github.com/medplum/medplum-hello-world/blob/main/LICENSE.txt">
     <img src="https://img.shields.io/badge/license-Apache-blue.svg" />
   </a>
 </p>
 
+> [!IMPORTANT]
+> A signed-in Medplum account is a **demo operator**, not a doctor. Doctors are discovered from NPPES or synthetic
+> patient history and represented as separate FHIR `Practitioner` resources. The Doctor Desk's NPI field only filters
+> demo data; it does not establish provider identity or authorization.
+
 This example app demonstrates the following:
 
-- How to build a scheduling app on Medplum for providers that manages the lifecycle of appointments, integrates with patient and practitioner data.
+- How to build a patient-booking workflow on Medplum that integrates patient and practitioner data.
 - Creating [`Slots`](/docs/api/fhir/resources/slot) to manage the provider availability.
 - Managing the [`Appointment`](/docs/api/fhir/resources/appointment) lifecycle: Creating, rescheduling, and canceling appointments.
 - Creating an [`Encounter`](/docs/api/fhir/resources/encounter) after an appointment is completed.
@@ -29,9 +34,10 @@ The `data` directory contains data that can be uploaded for use in the demo. The
   - Clinical Chart
   - Details (including Appointments and Encounters)
   - Actions (with a button to create a new appointment)
-- Schedule page to manage the provider availability and create new appointments.
-- Appointment page listing all appointments for the provider.
-- Appointment details page to view and manage the appointment lifecycle.
+- Patient agent for selecting a patient, finding doctors, choosing a synthetic slot, and booking an appointment.
+- Doctor Desk for filtering booked appointments by a doctor's NPI.
+- Appointment details page to view and manage the appointment lifecycle. Legacy `My Schedule` and `My Appointments`
+  routes redirect to the patient agent because the signed-in account is not a practitioner.
 
 ### Getting Started
 

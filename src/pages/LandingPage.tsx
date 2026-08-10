@@ -10,12 +10,12 @@ export function LandingPage(): JSX.Element {
     <Document width={500}>
       <Stack align="center">
         <Title order={1} fz={36}>
-          Welcome!
+          Doctor Appointment Agent
         </Title>
         <Text>
-          This Scheduling Demo shows how to build a simple React application that fetches Patient data from Medplum. If
-          you haven't already done so, <Anchor href="https://app.medplum.com/register">register</Anchor> for Medplum
-          Project. After that you can sign into your project by clicking the link below.
+          Sign in to access the synthetic patient-booking and doctor-desk demo. Your Medplum account authorizes access
+          to the demo project; it does not identify you as one of the doctors listed in the app. If you need a Medplum
+          project, <Anchor href="https://app.medplum.com/register">register here</Anchor> first.
         </Text>
         <Button component={Link} to="/signin" size="lg" radius="xl">
           Sign in

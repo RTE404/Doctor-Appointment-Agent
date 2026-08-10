@@ -24,8 +24,8 @@ export function DoctorLookupPage(): JSX.Element {
       <Stack>
         <Title order={1}>Doctor Desk</Title>
         <Text size="sm" c="dimmed">
-          Enter your NPI to view your patient queue. This filters the view to your patients only — it is not a
-          login or an access-control check.
+          Enter a doctor's 10-digit NPI to view appointments booked with that practitioner. The NPI is a demo filter;
+          it is not identity verification or an access-control check.
         </Text>
         <TextInput
           label="NPI"

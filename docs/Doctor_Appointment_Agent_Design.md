@@ -88,10 +88,10 @@ that exact name and role, not inferred from the README.
   `reschedule-appointment.ts`, which books the replacement through
   `$book`, preserves Appointment metadata, re-links the summary, and then
   cancels the original through native `$cancel`.
-- **Modify the shell**: add the `/agent/*` and `/desk/*` routes and menus
-  in `App.tsx`. Make `SchedulePage.tsx` a read-only booked-and-blocked
-  calendar, because `$find` computes free time instead of persisting free
-  Slots.
+- **Modify the shell**: make `/agent` the signed-in home, add the
+  `/agent/*` and `/desk/*` routes and menus, and retire the practitioner-owned
+  `My Schedule` and `My Appointments` navigation. Keep the old list/calendar
+  routes as redirects so bookmarks do not strand users.
 - **Deploy the final seven Bots correctly**: update `deploy-bots.ts` and
   `UploadDataPage.tsx` for `block-availability`,
   `reschedule-appointment`, and the five agent Bots. Resolve each Bot's
@@ -137,7 +137,7 @@ them.
 | *(shared lib, not a bot)* `ensurePractitionerAndSchedule` | called only by `agent-ensure-doctor` | Searches by NPI and reuses existing resources; otherwise creates the `Practitioner`, matching `PractitionerRole`, and `Schedule`. The Schedule uses an NPI-seeded deterministic weekly template and carries a single `SchedulingParameters` extension for the one Office Visit service. The search-before-create approach is idempotent in ordinary use; a concurrent first request for the same previously unseen NPI can still race and is an accepted POC limitation. No independent trigger — it does not get a separate Bot artifact. |
 | `agent-book-appointment` | `$execute` | Accepts only `{patientId, practitionerId, scheduleId, start, end, summaryCommunicationId}`. Re-reads and validates the Patient, Practitioner, Schedule, PractitionerRole, and intake Communication; derives specialty, reason, and complaint from those server-side resources; re-runs `$find`; and chooses the exact fresh proposal whose contained Slot matches the requested time. It adds the Patient participant and clinical display metadata before sending that exact proposal to `$book`. On success it read-and-spread links the summary Communication. A booking conflict becomes `{ok: false, reason: 'slot_taken'}`; unrelated pre-book failures re-throw, while a post-book Communication-link failure is logged so a committed booking is not reported as failed. |
 | `agent-patient-chat` | `$execute`, once per chat message | Accepts the doctor's NPI, resolves the real Practitioner, and verifies a booking relationship to the Patient before answering. Re-reads the Patient/Condition/MedicationRequest/AllergyIntolerance/Encounter **live, every call**, via the same shared `loadPatientClinicalContext` used by `agent-intake`. One Gemini call, single-turn, no tools. Persists the verified Practitioner-authored question and Device-authored answer as threaded `Communication` resources. |
-| Native `$cancel` / `reschedule-appointment` *(core, new)* | direct provider UI action (not exposed in the patient agent flow) | Cancellation calls Medplum's atomic instance-level `$cancel` directly. Rescheduling books the replacement through `$book`, preserves metadata and the summary link, then cancels the original through native `$cancel`. There is no custom cancellation or hold-expiry Bot. |
+| Native `$cancel` / `reschedule-appointment` *(core, new)* | appointment-detail action available to the demo operator (not exposed in the patient agent flow) | Cancellation calls Medplum's atomic instance-level `$cancel` directly. Rescheduling books the replacement through `$book`, preserves metadata and the summary link, then cancels the original through native `$cancel`. There is no custom cancellation or hold-expiry Bot. |
 
 ## 7. Scheduling mechanics
 
@@ -281,14 +281,20 @@ labeled as such, not oversold):
 
 ## 11. Doctor identifier & access model
 
+A signed-in Medplum account grants its user **demo operator** access. It
+does not identify the user as a doctor or a `Practitioner` resource. The app does not create a
+`Schedule` for that profile and does not expose practitioner-owned `My
+Schedule` or `My Appointments` views. Their legacy routes redirect signed-in
+operators to `/agent` and signed-out visitors to `/`.
+
 NPI is the doctor identifier, reused across both doctor pools (Synthea
 "previous physician" fake NPIs and NPPES real NPIs — confirmed they can
 never collide, since real NPIs are always 10 digits and Synthea's are
 short, e.g. `"290"`). It's always visible on the patient-facing
 confirmation page. Entering it on `/desk` is a **display filter, not a
-login or access-control mechanism** — this is an explicit, deliberate
-scope decision for the POC, not an oversight. No real per-doctor
-authentication is implemented.
+login, identity assertion, or access-control mechanism** — this is an
+explicit, deliberate scope decision for the POC, not an oversight. No real
+per-doctor authentication is implemented.
 
 ## 12. Error handling
 

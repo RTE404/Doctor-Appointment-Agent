@@ -4,7 +4,7 @@ import { Button, LoadingOverlay } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { capitalize, getReferenceString, isOk, normalizeErrorString } from '@medplum/core';
 import type { MedplumClient, WithId } from '@medplum/core';
-import type { Binary, Bot, Bundle, BundleEntry, Practitioner, Resource } from '@medplum/fhirtypes';
+import type { Binary, Bot, Bundle, BundleEntry, Resource } from '@medplum/fhirtypes';
 import { Document, useMedplum, useMedplumProfile } from '@medplum/react';
 import { IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
@@ -12,7 +12,7 @@ import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import coreData from '../../data/core/appointment-service-types.json';
 
-type UploadFunction = (medplum: MedplumClient, profile: Practitioner) => Promise<void>;
+type UploadFunction = (medplum: MedplumClient, profile: Resource) => Promise<void>;
 type UploadDataType = 'core' | 'bots';
 
 interface UploadDataPageProps {
@@ -48,7 +48,7 @@ export function UploadDataPage({ uploadType }: UploadDataPageProps): JSX.Element
         throw new Error(`Invalid upload type: ${dataType}`);
     }
 
-    uploadFunction(medplum, profile as Practitioner)
+    uploadFunction(medplum, profile)
       .then(() => navigate('/'))
       .catch((error) => {
         showNotification({
@@ -94,7 +94,7 @@ async function uploadCoreData(medplum: MedplumClient): Promise<void> {
 
 const EXAMPLE_BOTS_JSON = '../../data/core/example-bots.json';
 
-async function uploadExampleBots(medplum: MedplumClient, profile: Practitioner): Promise<void> {
+async function uploadExampleBots(medplum: MedplumClient, profile: Resource): Promise<void> {
   let exampleBotData: Bundle;
   try {
     exampleBotData = await import(/* @vite-ignore */ EXAMPLE_BOTS_JSON);

@@ -13,8 +13,9 @@ surfaces:
   AI understanding of a brief appointment request, reuse of previous care
   history when appropriate, discovery of new doctors through NPPES, and
   appointment booking using a synthetic-but-realistic scheduling model.
-- **Doctor-facing**: once a patient books, the specific doctor (looked up
-  by NPI) can see every patient who has ever booked with them, each with a
+- **Doctor-facing demo**: once a patient books, the signed-in demo operator
+  can look up a specific doctor by NPI and see every patient who has ever
+  booked with them, each with a
   short AI-generated pre-visit summary and their stated issue, and can
   chat with an AI agent grounded strictly in that patient's real record to
   ask follow-up questions before the visit.
@@ -45,7 +46,7 @@ Included:
 - Previous physician lookup
 - New doctor discovery
 - Appointment booking
-- Provider-side appointment cancellation and rescheduling through
+- Operator-accessed appointment cancellation and rescheduling through
   Medplum's native scheduling operations
 - Doctor lookup by NPI
 - Per-doctor patient queue (everyone who's ever booked with them)
@@ -55,9 +56,10 @@ Included:
 Excluded: Diagnosis, adaptive questionnaires, clinical decision support,
 medication recommendations, clinical judgment or advice of any kind from
 either AI surface, patient-agent cancellation/rescheduling flows, waitlists, reminders, recurring
-appointments, real authentication/login for doctors (NPI entry is a
-display filter, not an access-control mechanism — see Design doc §"Doctor
-identifier & access model").
+appointments, and real authentication/login for doctors. Medplum login
+authorizes the demo operator to access the project; NPI entry is only a
+display filter, not an identity or access-control mechanism (see Design
+doc §"Doctor identifier & access model").
 
 ------------------------------------------------------------------------
 
@@ -126,13 +128,13 @@ NPI-seeded availability mechanism.
 12. Appointment confirmation — the doctor's NPI is shown prominently, since
     that's how the demo user carries the handoff to the doctor-facing side.
 
-**Doctor-facing (new):**
-13. Doctor enters their NPI to filter the view (a display filter, not a
-    login).
-14. Doctor sees every patient who has ever booked with them — name,
-    AI-generated summary, stated issue, appointment date.
-15. Doctor opens a chat with the patient-agent, grounded live in that
-    patient's real Medplum record, to ask follow-up questions. The agent
+**Doctor-facing demo (new):**
+13. The demo operator enters a doctor's NPI to filter the view (a display
+    filter, not a login or identity claim).
+14. The operator sees every patient who has ever booked with that doctor —
+    name, AI-generated summary, stated issue, appointment date.
+15. The operator opens the doctor-facing chat with the patient-agent,
+    grounded live in that patient's real Medplum record, to ask follow-up questions. The agent
     never diagnoses or offers clinical judgment; every question and answer
     is persisted for audit purposes.
 

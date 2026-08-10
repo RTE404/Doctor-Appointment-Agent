@@ -50,7 +50,7 @@ export function AppointmentActions(props: AppointmentActionsProps): JSX.Element 
       // and deletes its Slot(s) in one step.
       await medplum.post(medplum.fhirUrl('Appointment', appointment.id as string, '$cancel'), {});
 
-      navigate('/Appointment/upcoming')?.catch(console.error);
+      navigate('/agent')?.catch(console.error);
       showNotification({
         icon: <IconCircleCheck />,
         title: 'Success',
