@@ -1,6 +1,6 @@
 // src/bots/agent/agent-patient-chat.ts
 import type { BotEvent, MedplumClient } from '@medplum/core';
-import { loadPatientClinicalContext } from './lib/patientContext.js';
+import { loadCompletePatientContext } from './lib/completePatientContext.js';
 import { CHAT_SYSTEM_PROMPT, buildChatUserPrompt, containsInterpretationLanguage } from './lib/prompts.js';
 
 const REFUSAL =
@@ -71,7 +71,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<ChatInput>
     throw new Error(`No booking relationship between NPI ${npi} and patient ${patientId}`);
   }
 
-  const context = await loadPatientClinicalContext(medplum, patientId);
+  const context = await loadCompletePatientContext(medplum, patientId);
   const userPrompt = buildChatUserPrompt(context, question);
   const rawAnswer = await geminiCaller(apiKey, CHAT_SYSTEM_PROMPT, userPrompt);
   const answer = containsInterpretationLanguage(rawAnswer) ? REFUSAL : rawAnswer;

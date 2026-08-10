@@ -1,10 +1,27 @@
 // src/bots/agent/agent-patient-chat.test.ts
 import { beforeAll, describe, expect, test } from 'vitest';
+import { vi as fixtureVi } from 'vitest';
 import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
+import { ReadablePromise } from '@medplum/core';
 import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
 import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
+import type { Patient } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import { handler, __setGeminiCallerForTests } from './agent-patient-chat';
+function stubPatientEverything(medplum: MockClient, patient: Patient): void {
+  const everything: Bundle = {
+    resourceType: 'Bundle',
+    type: 'searchset',
+    entry: [{ resource: patient }],
+  };
+  const originalGet = medplum.get.bind(medplum);
+  fixtureVi.spyOn(medplum, 'get').mockImplementation((url, options) => {
+    if (url.toString().endsWith(`/Patient/${patient.id}/$everything`)) {
+      return new ReadablePromise(Promise.resolve(everything));
+    }
+    return originalGet(url, options);
+  });
+}
 
 // The handler searches Practitioner.identifier, Appointment.actor/patient,
 // and Communication.partOf — none indexed by a bare MockClient. See
@@ -22,6 +39,7 @@ describe('agent-patient-chat handler', () => {
   test('persists question and answer as threaded Communications, sender is the real practitioner, starts a new thread', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
+    stubPatientEverything(medplum, patient);
     const practitioner = await medplum.createResource({ resourceType: 'Practitioner', identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }] });
     await medplum.createResource({
       resourceType: 'Appointment',
@@ -78,6 +96,7 @@ describe('agent-patient-chat handler', () => {
   test('uses the Practitioner that owns the patient relationship when an NPI is duplicated', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
+    stubPatientEverything(medplum, patient);
     await medplum.createResource({
       resourceType: 'Practitioner',
       identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
@@ -114,6 +133,7 @@ describe('agent-patient-chat handler', () => {
   test('substitutes the fixed refusal when the model answer contains interpretation language', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
+    stubPatientEverything(medplum, patient);
     const practitioner = await medplum.createResource({ resourceType: 'Practitioner', identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }] });
     await medplum.createResource({
       resourceType: 'Appointment',
