@@ -110,6 +110,10 @@ function serviceTypeConcept(healthcareServiceId: string): CodeableConcept {
   };
 }
 
+function conditionalQuery(parameters: Record<string, string>): string {
+  return new URLSearchParams(parameters).toString();
+}
+
 /**
  * Lazy provisioning — the sole caller is agent-ensure-doctor (never
  * agent-find-doctors, never the UI directly), since NPPES lookups need a bot.
@@ -122,36 +126,54 @@ export async function ensurePractitionerAndSchedule(
   const officeVisit: HealthcareService = (await medplum.searchOne('HealthcareService', { name: 'Office Visit' })) as HealthcareService;
   const healthcareServiceId = officeVisit.id as string;
 
+  let doctor = candidate;
   let practitioner = await medplum.searchOne('Practitioner', { identifier: `${NPI_SYSTEM}|${npi}` });
   if (!practitioner) {
-    const doctor = candidate ?? (await nppesLookup(npi));
+    doctor ??= await nppesLookup(npi);
     if (!doctor) {
       throw new Error(`No NPPES record found for NPI ${npi}`);
     }
-    const created = await medplum.createResource<Practitioner>({
-      resourceType: 'Practitioner',
-      identifier: [{ system: NPI_SYSTEM, value: npi }],
-      name: [{ given: [doctor.firstName], family: doctor.lastName }],
-    });
-    await medplum.createResource({
-      resourceType: 'PractitionerRole',
-      practitioner: { reference: `Practitioner/${created.id}` },
-      specialty: [{ coding: [{ system: NUCC_SYSTEM, code: doctor.nuccCode, display: doctor.nuccDisplay }] }],
-    });
-    practitioner = created;
+    practitioner = await medplum.createResourceIfNoneExist<Practitioner>(
+      {
+        resourceType: 'Practitioner',
+        identifier: [{ system: NPI_SYSTEM, value: npi }],
+        name: [{ given: [doctor.firstName], family: doctor.lastName }],
+      },
+      conditionalQuery({ identifier: `${NPI_SYSTEM}|${npi}` })
+    );
   }
-  const practitionerId = practitioner.id;
+  const practitionerId = practitioner.id as string;
+  const practitionerReference = `Practitioner/${practitionerId}`;
 
-  let schedule = await medplum.searchOne('Schedule', { actor: `Practitioner/${practitionerId}` });
+  const practitionerRole = await medplum.searchOne('PractitionerRole', { practitioner: practitionerReference });
+  if (!practitionerRole) {
+    doctor ??= await nppesLookup(npi);
+    if (!doctor) {
+      throw new Error(`No NPPES record found for NPI ${npi}`);
+    }
+    await medplum.createResourceIfNoneExist(
+      {
+        resourceType: 'PractitionerRole',
+        practitioner: { reference: practitionerReference },
+        specialty: [{ coding: [{ system: NUCC_SYSTEM, code: doctor.nuccCode, display: doctor.nuccDisplay }] }],
+      },
+      conditionalQuery({ practitioner: practitionerReference, specialty: `${NUCC_SYSTEM}|${doctor.nuccCode}` })
+    );
+  }
+
+  let schedule = await medplum.searchOne('Schedule', { actor: practitionerReference });
   if (!schedule) {
     const template = deriveWeeklyTemplate(npi);
-    const timezone = timezoneForState(candidate?.address.state);
-    schedule = await medplum.createResource<Schedule>({
-      resourceType: 'Schedule',
-      actor: [{ reference: `Practitioner/${practitionerId}` }],
-      serviceType: [serviceTypeConcept(healthcareServiceId)],
-      extension: [buildSchedulingParametersExtension(template, timezone, healthcareServiceId, 30)],
-    });
+    const timezone = timezoneForState(doctor?.address.state);
+    schedule = await medplum.createResourceIfNoneExist<Schedule>(
+      {
+        resourceType: 'Schedule',
+        actor: [{ reference: practitionerReference }],
+        serviceType: [serviceTypeConcept(healthcareServiceId)],
+        extension: [buildSchedulingParametersExtension(template, timezone, healthcareServiceId, 30)],
+      },
+      conditionalQuery({ actor: practitionerReference })
+    );
   }
 
   return { practitionerId, scheduleId: schedule.id as string, healthcareServiceId };

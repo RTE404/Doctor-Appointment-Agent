@@ -74,6 +74,36 @@ describe('ensurePractitionerAndSchedule', () => {
     expect(second.scheduleId).toBe(first.scheduleId);
   });
 
+  test('is idempotent when two requests provision the same NPI concurrently', async () => {
+    const medplum = new MockClient();
+    await medplum.createResource({ resourceType: 'HealthcareService', id: 'office-visit', name: 'Office Visit' });
+    const candidate = {
+      npi: '1234567890',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      nuccCode: '207RC0000X',
+      nuccDisplay: 'Cardiovascular Disease',
+      address: { state: 'MA' },
+    };
+
+    const [first, second] = await Promise.all([
+      ensurePractitionerAndSchedule(medplum, candidate.npi, candidate),
+      ensurePractitionerAndSchedule(medplum, candidate.npi, candidate),
+    ]);
+
+    const practitioners = await medplum.searchResources('Practitioner', {
+      identifier: 'http://hl7.org/fhir/sid/us-npi|1234567890',
+    });
+    const schedules = await medplum.searchResources('Schedule', {
+      actor: `Practitioner/${first.practitionerId}`,
+    });
+
+    expect(second.practitionerId).toBe(first.practitionerId);
+    expect(second.scheduleId).toBe(first.scheduleId);
+    expect(practitioners).toHaveLength(1);
+    expect(schedules).toHaveLength(1);
+  });
+
   test('looks up NPPES when no candidate is supplied', async () => {
     const medplum = new MockClient();
     await medplum.createResource({ resourceType: 'HealthcareService', id: 'office-visit', name: 'Office Visit' });
