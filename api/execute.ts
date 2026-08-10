@@ -171,7 +171,8 @@ export async function handleExecuteRequest(
       session.profile
     );
     return { status: 200, body };
-  } catch {
+  } catch (error) {
+    console.error('Action execution failed', executionFailureCode(error));
     return executionFailed();
   }
 }
@@ -199,6 +200,16 @@ function invalidRequest(): ExecuteResponse {
 
 function executionFailed(): ExecuteResponse {
   return { status: 500, body: { error: 'Action execution failed' } };
+}
+
+function executionFailureCode(error: unknown): string {
+  if (error instanceof Error) {
+    const geminiStatus = /^Gemini request failed: ([1-5]\d{2})$/.exec(error.message);
+    if (geminiStatus) {
+      return `gemini-http-${geminiStatus[1]}`;
+    }
+  }
+  return 'unclassified';
 }
 
 function headerValue(headers: ExecuteRequest['headers'], name: string): string | undefined {
