@@ -1,7 +1,8 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import type { Bundle, Patient, Resource } from '@medplum/fhirtypes';
 import { describe, expect, test, vi } from 'vitest';
-import { __setGeminiCallerForTests, handler, type ChatInput } from './agent-patient-chat';
+import { __setGeminiCallerForTests, handler } from './agent-patient-chat';
+import type { ChatInput } from './agent-patient-chat';
 
 describe('agent-patient-chat complete patient grounding', () => {
   test('sends complete demographics and an additional FHIR resource type to Gemini after relationship verification', async () => {
