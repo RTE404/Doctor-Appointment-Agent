@@ -1,7 +1,9 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from 'node:fs';
 
 interface BundleLike {
-  entry?: Array<{ resource?: { resourceType?: string; type?: Array<{ text?: string }> } }>;
+  entry?: { resource?: { resourceType?: string; type?: { text?: string }[] } }[];
 }
 
 export function collectEncounterTypeTexts(bundlePaths: string[]): Set<string> {
@@ -9,8 +11,14 @@ export function collectEncounterTypeTexts(bundlePaths: string[]): Set<string> {
   for (const path of bundlePaths) {
     const bundle = JSON.parse(readFileSync(path, 'utf8')) as BundleLike;
     for (const entry of bundle.entry ?? []) {
-      if (entry.resource?.resourceType !== 'Encounter') continue;
-      for (const type of entry.resource.type ?? []) if (type.text) encounterTypes.add(type.text);
+      if (entry.resource?.resourceType !== 'Encounter') {
+        continue;
+      }
+      for (const type of entry.resource.type ?? []) {
+        if (type.text) {
+          encounterTypes.add(type.text);
+        }
+      }
     }
   }
   return encounterTypes;

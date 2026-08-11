@@ -1,4 +1,5 @@
-// tools/seed/specialty-resolver.test.ts
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
 import { describe, expect, test } from 'vitest';
 import { resolveSpecialty, SPECIALTY_NUCC_CODES, allPossibleSpecialtyLabels } from './specialty-resolver';
 
