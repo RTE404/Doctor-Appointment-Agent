@@ -1,5 +1,5 @@
 // src/bots/agent/agent-patient-chat.test.ts
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { vi as fixtureVi } from 'vitest';
 import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
 import { ReadablePromise } from '@medplum/core';
@@ -35,7 +35,53 @@ beforeAll(() => {
   }
 });
 
+afterEach(() => {
+  fixtureVi.unstubAllGlobals();
+});
+
 describe('agent-patient-chat handler', () => {
+  test('omits response formatting on the real Gemini fetch path', async () => {
+    __setGeminiCallerForTests();
+    const fetchMock = fixtureVi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'The record shows no known allergies.' } }] }),
+    });
+    fixtureVi.stubGlobal('fetch', fetchMock);
+
+    const medplum = new MockClient();
+    const patient = await medplum.createResource({ resourceType: 'Patient' });
+    stubPatientEverything(medplum, patient);
+    const practitioner = await medplum.createResource({
+      resourceType: 'Practitioner',
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+    });
+    await medplum.createResource({
+      resourceType: 'Appointment',
+      status: 'booked',
+      participant: [
+        { actor: { reference: `Patient/${patient.id}` }, status: 'accepted' },
+        { actor: { reference: `Practitioner/${practitioner.id}` }, status: 'accepted' },
+      ],
+    });
+    await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
+
+    await handler(medplum, {
+      bot: { reference: 'Bot/123' },
+      input: { npi: '1234567890', patientId: patient.id as string, question: 'Any known allergies?' },
+      contentType: 'application/json',
+      secrets: { GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: 'test-key' } },
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(request.body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({ model: 'gemini-3.1-flash-lite' });
+    expect(body).not.toHaveProperty('response_format');
+  });
+
   test('persists question and answer as threaded Communications, sender is the real practitioner, starts a new thread', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });

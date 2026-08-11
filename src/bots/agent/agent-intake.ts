@@ -22,8 +22,8 @@ type GeminiCaller = (apiKey: string, systemPrompt: string, userPrompt: string) =
 let geminiCaller: GeminiCaller = callGeminiForIntake;
 
 /** Test-only seam — swaps the real Gemini call for a stub. */
-export function __setGeminiCallerForTests(fn: GeminiCaller): void {
-  geminiCaller = fn;
+export function __setGeminiCallerForTests(fn?: GeminiCaller): void {
+  geminiCaller = fn ?? callGeminiForIntake;
 }
 
 async function callGeminiForIntake(apiKey: string, systemPrompt: string, userPrompt: string): Promise<GeminiIntakeResult> {

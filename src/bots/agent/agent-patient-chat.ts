@@ -14,8 +14,8 @@ type GeminiCaller = (apiKey: string, systemPrompt: string, userPrompt: string) =
 let geminiCaller: GeminiCaller = callGeminiForChat;
 
 /** Test-only seam. */
-export function __setGeminiCallerForTests(fn: GeminiCaller): void {
-  geminiCaller = fn;
+export function __setGeminiCallerForTests(fn?: GeminiCaller): void {
+  geminiCaller = fn ?? callGeminiForChat;
 }
 
 async function callGeminiForChat(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {

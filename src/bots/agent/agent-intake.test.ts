@@ -1,5 +1,5 @@
 // src/bots/agent/agent-intake.test.ts
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
 import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
 import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
@@ -18,7 +18,54 @@ beforeAll(() => {
   }
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('agent-intake handler', () => {
+  test('serializes JSON-object response formatting on the real Gemini fetch path', async () => {
+    __setGeminiCallerForTests();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                specialty: 'cardiology',
+                reason: 'Chest discomfort during exercise',
+                summary: 'Patient reports exertional chest discomfort over the past week.',
+              }),
+            },
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const medplum = new MockClient();
+    const patient = await medplum.createResource({ resourceType: 'Patient' });
+    await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
+
+    await handler(medplum, {
+      bot: { reference: 'Bot/123' },
+      input: { patientId: patient.id as string, complaintText: 'My chest hurts when I run' },
+      contentType: 'application/json',
+      secrets: { GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: 'test-key' } },
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(request.body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      model: 'gemini-3.1-flash-lite',
+      response_format: { type: 'json_object' },
+    });
+  });
+
   test('creates a preparation Communication and returns normalized intent', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient', name: [{ given: ['Test'], family: 'Patient' }] });
