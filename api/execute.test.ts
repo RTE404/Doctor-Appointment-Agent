@@ -1,4 +1,6 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, test, vi } from 'vitest';
 import {
   ALLOWED_ACTIONS,
@@ -25,6 +27,32 @@ const environment: ExecuteEnvironment = {
 const profile = { resourceType: 'ClientApplication' as const, id: 'browser-client' };
 const medplum = { getProfileAsync: async () => profile } as unknown as MedplumClient;
 const workerMedplum = { getProfileAsync: async () => ({ resourceType: 'ClientApplication' as const, id: 'worker-client' }) } as unknown as MedplumClient;
+
+test('allows the patient concierge discovery action', () => {
+  expect(ALLOWED_ACTIONS).toContain('agent-find-bookable-options');
+});
+
+test('compiles the serverless runtime graph with Node ESM import semantics', () => {
+  const entrypoint = fileURLToPath(new URL('./execute.ts', import.meta.url));
+  const program = ts.createProgram([entrypoint], {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+  });
+  const diagnostics = ts.getPreEmitDiagnostics(program).map((diagnostic) => {
+    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+    if (!diagnostic.file || diagnostic.start === undefined) {
+      return message;
+    }
+    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+    return `${diagnostic.file.fileName}:${position.line + 1}:${position.character + 1} ${message}`;
+  });
+
+  expect(diagnostics).toEqual([]);
+}, 60_000);
 
 function request(body: unknown, authorization?: string, contentType = 'application/json'): ExecuteRequest {
   return {
@@ -72,7 +100,7 @@ describe('dispatchAction', () => {
     expect(seen[action]?.input).toEqual({ marker: action });
   });
 
-  test.each(['agent-intake', 'agent-patient-chat'] as const)('passes GEMINI_API_KEY only to %s', async (action) => {
+  test.each(['agent-intake', 'agent-find-bookable-options', 'agent-patient-chat'] as const)('passes GEMINI_API_KEY only to %s', async (action) => {
     const { handlers, seen } = createHandlers();
 
     await dispatchAction(medplum, action, {}, 'gemini-key', handlers);
@@ -236,15 +264,18 @@ describe('handleExecuteRequest', () => {
     expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
   });
 
-  test('returns a sanitized 500 response when Gemini configuration is missing for a Gemini action', async () => {
-    const response = await handleExecuteRequest(
-      request({ action: 'agent-intake', input: {} }, 'Bearer valid-token'),
-      { ...environment, GEMINI_API_KEY: undefined },
-      createDependencies(createHandlers().handlers)
-    );
+  test.each(['agent-intake', 'agent-find-bookable-options'] as const)(
+    'returns a sanitized 500 response when Gemini configuration is missing for %s',
+    async (action) => {
+      const response = await handleExecuteRequest(
+        request({ action, input: {} }, 'Bearer valid-token'),
+        { ...environment, GEMINI_API_KEY: undefined },
+        createDependencies(createHandlers().handlers)
+      );
 
-    expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
-  });
+      expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
+    }
+  );
 
   test('sanitizes handler failures without echoing token, key, or input markers', async () => {
     const { handlers } = createHandlers();

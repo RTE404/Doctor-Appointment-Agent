@@ -2,7 +2,7 @@
 
 ## Objective
 
-Deliver one patient-facing appointment agent that accepts a natural-language complaint and scheduling preferences, returns the three best currently bookable doctor-and-time options in the next seven days, and books one option only after explicit confirmation.
+Deliver one patient-facing appointment agent that accepts a natural-language complaint and scheduling preferences, returns the three best currently bookable doctor-and-time options from distinct providers in the next seven days, and books one option only after explicit confirmation.
 
 The implementation must reuse the repository's existing intake, specialty normalization, NPPES search, previous-doctor lookup, practitioner/schedule provisioning, Medplum `Appointment/$find`, and authoritative `Appointment/$book` code. It must not introduce a general autonomous tool loop or a new persistence service.
 
@@ -10,7 +10,7 @@ The implementation must reuse the repository's existing intake, specialty normal
 
 The agent exposes exactly two capabilities:
 
-1. `find_bookable_options`: interpret the request, route it to a supported scheduling specialty, extract the three supported preferences, search doctors and availability, and return three ranked bookable options.
+1. `find_bookable_options`: interpret the request, route it to a supported scheduling specialty, extract the three supported preferences, search doctors and availability, and return the best slot for each of up to three distinct providers.
 2. `book_appointment`: reuse the existing `agent-book-appointment` action to revalidate and book one selected option after a separate confirmation step.
 
 Out of scope: appointment-status lookup, booking cancellation or rescheduling, patient-side specialty revision after routing, persistent learned preferences, cross-session chat memory, diagnosis, treatment advice, urgency assessment, Neo4j, and a separate Brain/memory service.
@@ -21,9 +21,9 @@ Example input:
 
 > I have had pain in my throat and constant coughing for the past two days. Find me a nearby doctor. I prefer mornings and someone I've seen before.
 
-The patient-facing result begins directly with `Here are the best available options:`. It does not expose the inferred specialty, the configured routing rule, the seven-day default, or the full ranking algorithm. Each option shows doctor name, date, time, previous/new-doctor status, and distance when known. The final line is `Which option would you like to book?`
+The patient-facing result begins directly with `Here are the best available options:`. It does not expose the inferred specialty, the configured routing rule, the seven-day default, or the full ranking algorithm. Each option represents a distinct provider and shows that provider's best-ranked slot, doctor name, date, time, previous/new-doctor status, and distance when known. The final line is `Which option would you like to book?`
 
-After the patient selects an option, the agent repeats the exact doctor, date, time, and distance when known, states that it has not booked yet, and asks for confirmation. Only an explicit confirmation control can call `book_appointment`. Success uses the existing booking-confirmation page.
+After the patient selects an option, the agent repeats the exact doctor, date, time, and distance when known, states that it has not booked yet, and asks for confirmation. Only an explicit confirmation control can call `book_appointment`. On success, the booking-confirmation page shows the doctor, specialty, schedule-local date and time with timezone, booked status, appointment ID, and NPI.
 
 ## Routing
 

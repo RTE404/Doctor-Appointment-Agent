@@ -8,10 +8,11 @@ interface ComplaintFormProps {
   onSubmit: (complaintText: string) => void;
   submitting: boolean;
   needsClarification: boolean;
+  disabled?: boolean;
 }
 
 export function ComplaintForm(props: ComplaintFormProps): JSX.Element {
-  const { onSubmit, submitting, needsClarification } = props;
+  const { onSubmit, submitting, needsClarification, disabled = false } = props;
   const [complaintText, setComplaintText] = useState('');
 
   return (
@@ -26,6 +27,7 @@ export function ComplaintForm(props: ComplaintFormProps): JSX.Element {
         placeholder="e.g. My chest hurts when I run"
         value={complaintText}
         onChange={(e) => setComplaintText(e.currentTarget.value)}
+        disabled={disabled}
         minRows={2}
         maxRows={3}
       />
@@ -34,7 +36,7 @@ export function ComplaintForm(props: ComplaintFormProps): JSX.Element {
         emergency, call 911 or go to the nearest emergency room instead of using this form.
       </Text>
       <Group justify="flex-end">
-        <Button disabled={!complaintText.trim() || submitting} loading={submitting} onClick={() => onSubmit(complaintText)}>
+        <Button disabled={!complaintText.trim() || submitting || disabled} loading={submitting} onClick={() => onSubmit(complaintText)}>
           Find a Doctor
         </Button>
       </Group>

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver one working patient-facing agent that turns a complaint and three scheduling preferences into three ranked appointments in the next seven days and books one only after explicit confirmation.
+**Goal:** Deliver one working patient-facing agent that turns a complaint and three scheduling preferences into ranked appointments from up to three distinct providers in the next seven days and books one only after explicit confirmation.
 
 **Architecture:** Keep the current Medplum/Vercel action architecture. Extend the existing Gemini intake call to return validated request-scoped preferences, add one `agent-find-bookable-options` action that composes existing doctor search, schedule provisioning, and `Appointment/$find`, then reuse `agent-book-appointment` unchanged behind a deterministic UI confirmation state. Do not add a general tool-calling loop, a database, or persistent agent memory.
 
@@ -15,6 +15,7 @@
 - Search window: current instant through exactly seven days later.
 - Preferences: time of day, previous matching doctor, and proximity only.
 - Deterministic ranking: time-of-day match, previous matching doctor, known shorter distance, then earlier slot.
+- Return only the best-ranked slot per provider so the final options contain distinct provider NPIs.
 - Preferences are soft ranking signals and are never persisted.
 - Routing: explicit specialty/referral; clear supported mapping; one clarification for ambiguity; `General Practice` when no specialty preference exists.
 - Do not add patient-side specialty correction or revision.

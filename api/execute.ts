@@ -15,6 +15,8 @@ import { handler as agentEnsureDoctorHandler } from '../src/bots/agent/agent-ens
 import type { EnsureDoctorInput } from '../src/bots/agent/agent-ensure-doctor.js';
 import { handler as agentFindDoctorsHandler } from '../src/bots/agent/agent-find-doctors.js';
 import type { FindDoctorsInput } from '../src/bots/agent/agent-find-doctors.js';
+import { handler as agentFindBookableOptionsHandler } from '../src/bots/agent/agent-find-bookable-options.js';
+import type { FindBookableOptionsInput } from '../src/bots/agent/agent-find-bookable-options.js';
 import { handler as agentIntakeHandler } from '../src/bots/agent/agent-intake.js';
 import type { IntakeInput } from '../src/bots/agent/agent-intake.js';
 import { handler as agentPatientChatHandler } from '../src/bots/agent/agent-patient-chat.js';
@@ -26,6 +28,7 @@ export const ALLOWED_ACTIONS = [
   'reschedule-appointment',
   'agent-intake',
   'agent-find-doctors',
+  'agent-find-bookable-options',
   'agent-ensure-doctor',
   'agent-book-appointment',
   'agent-patient-chat',
@@ -74,7 +77,7 @@ export interface ExecuteDependencies {
   handlers?: Record<ActionName, RuntimeActionHandler>;
 }
 
-const GEMINI_ACTIONS = new Set<ActionName>(['agent-intake', 'agent-patient-chat']);
+const GEMINI_ACTIONS = new Set<ActionName>(['agent-intake', 'agent-find-bookable-options', 'agent-patient-chat']);
 
 const HANDLERS: Record<ActionName, RuntimeActionHandler> = {
   'cancel-appointment': (medplum, event) =>
@@ -84,6 +87,8 @@ const HANDLERS: Record<ActionName, RuntimeActionHandler> = {
   'reschedule-appointment': (medplum, event) => rescheduleAppointmentHandler(medplum, event as BotEvent<RescheduleInput>),
   'agent-intake': (medplum, event) => agentIntakeHandler(medplum, event as BotEvent<IntakeInput>),
   'agent-find-doctors': (medplum, event) => agentFindDoctorsHandler(medplum, event as BotEvent<FindDoctorsInput>),
+  'agent-find-bookable-options': (medplum, event) =>
+    agentFindBookableOptionsHandler(medplum, event as unknown as BotEvent<FindBookableOptionsInput>),
   'agent-ensure-doctor': (medplum, event) => agentEnsureDoctorHandler(medplum, event as BotEvent<EnsureDoctorInput>),
   'agent-book-appointment': (medplum, event) => agentBookAppointmentHandler(medplum, event as BotEvent<BookInput>),
   'agent-patient-chat': (medplum, event) => agentPatientChatHandler(medplum, event as BotEvent<ChatInput>),
