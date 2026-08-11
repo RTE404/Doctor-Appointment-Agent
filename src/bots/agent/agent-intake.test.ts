@@ -33,6 +33,7 @@ describe('agent-intake handler', () => {
       specialty: 'cardiology',
       reason: 'Chest discomfort during exercise',
       summary: 'Patient reports exertional chest discomfort over the past week.',
+      preferences: { timeOfDay: 'morning', preferPreviousDoctor: true, preferNearby: true },
     }));
 
     const result = await handler(medplum, {
@@ -44,6 +45,7 @@ describe('agent-intake handler', () => {
 
     expect(result).toMatchObject({
       intent: { specialtyLabel: 'Cardiology', reason: 'Chest discomfort during exercise' },
+      preferences: { timeOfDay: 'morning', preferPreviousDoctor: true, preferNearby: true },
     });
     if (!('summaryCommunicationId' in result)) throw new Error('expected summaryCommunicationId');
     const communication = await medplum.readResource('Communication', result.summaryCommunicationId);
@@ -77,5 +79,32 @@ describe('agent-intake handler', () => {
     });
 
     expect(result).toStrictEqual({ needsClarification: true });
+  });
+
+  test('normalizes the general-care fallback to General Practice', async () => {
+    const medplum = new MockClient();
+    const patient = await medplum.createResource({ resourceType: 'Patient' });
+    await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
+    __setGeminiCallerForTests(async () => ({
+      specialty: 'General Practice',
+      reason: 'General appointment request',
+      summary: 'Patient requests a general appointment.',
+      preferences: {},
+    }));
+
+    const result = await handler(medplum, {
+      bot: { reference: 'Bot/123' },
+      input: { patientId: patient.id as string, complaintText: 'Find me a doctor' },
+      contentType: 'application/json',
+      secrets: { GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: 'test-key' } },
+    });
+
+    expect(result).toMatchObject({
+      intent: { specialtyCode: '208D00000X', specialtyLabel: 'General Practice' },
+      preferences: { timeOfDay: undefined, preferPreviousDoctor: false, preferNearby: false },
+    });
   });
 });

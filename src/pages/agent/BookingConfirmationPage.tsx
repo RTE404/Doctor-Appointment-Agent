@@ -1,20 +1,33 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
 import { Alert, CopyButton, Loader, Stack, Text, Title } from '@mantine/core';
-import { normalizeErrorString } from '@medplum/core';
+import { getDisplayString, normalizeErrorString } from '@medplum/core';
 import { Document, useMedplum } from '@medplum/react';
-import type { Appointment, Practitioner } from '@medplum/fhirtypes';
-import dayjs from 'dayjs';
+import type { Appointment, Practitioner, PractitionerRole, Schedule, Slot } from '@medplum/fhirtypes';
 import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router';
-import { getPractitionerNpi, getPractitionerReference } from './bookingConfirmation';
+import {
+  formatAppointmentDateTime,
+  getAppointmentSlotReference,
+  getPractitionerNpi,
+  getPractitionerReference,
+  getPractitionerSpecialty,
+  getScheduleTimeZone,
+} from './bookingConfirmation';
+
+interface ConfirmationDetails {
+  appointment: Appointment;
+  doctorName: string;
+  npi: string;
+  specialty: string;
+  timeZone: string;
+}
 
 export function BookingConfirmationPage(): JSX.Element {
   const { apptId } = useParams();
   const medplum = useMedplum();
-  const [appointment, setAppointment] = useState<Appointment>();
-  const [npi, setNpi] = useState<string>();
+  const [details, setDetails] = useState<ConfirmationDetails>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -35,8 +48,33 @@ export function BookingConfirmationPage(): JSX.Element {
         throw new Error('The booked doctor does not have a US NPI identifier.');
       }
 
-      setAppointment(loadedAppointment);
-      setNpi(practitionerNpi);
+      const slotReference = getAppointmentSlotReference(loadedAppointment);
+      if (!slotReference) {
+        throw new Error('The booked appointment does not identify its reserved slot.');
+      }
+      const slot: Slot = await medplum.readReference({ reference: slotReference });
+      if (!slot.schedule.reference?.startsWith('Schedule/')) {
+        throw new Error('The booked slot does not identify its provider schedule.');
+      }
+      const schedule: Schedule = await medplum.readReference(slot.schedule);
+      const timeZone = getScheduleTimeZone(schedule);
+      if (!timeZone) {
+        throw new Error('The booked provider schedule does not identify its timezone.');
+      }
+
+      const roles: PractitionerRole[] = await medplum.searchResources('PractitionerRole', {
+        practitioner: practitionerReference,
+      });
+      const displayName = getDisplayString(practitioner);
+      const doctorName = /^dr\.?\s/i.test(displayName) ? displayName : `Dr. ${displayName}`;
+
+      setDetails({
+        appointment: loadedAppointment,
+        doctorName,
+        npi: practitionerNpi,
+        specialty: getPractitionerSpecialty(roles) ?? 'Not specified',
+        timeZone,
+      });
     }
 
     setError(undefined);
@@ -53,7 +91,7 @@ export function BookingConfirmationPage(): JSX.Element {
     );
   }
 
-  if (!appointment) {
+  if (!details) {
     return (
       <Document width={600}>
         <Loader />
@@ -61,22 +99,25 @@ export function BookingConfirmationPage(): JSX.Element {
     );
   }
 
+  const { appointment, doctorName, npi, specialty, timeZone } = details;
+  const appointmentTime = formatAppointmentDateTime(appointment.start as string, appointment.end as string, timeZone);
+
   return (
     <Document width={600}>
       <Stack align="center">
         <Title order={1}>Appointment Confirmed</Title>
-        <Text>{dayjs(appointment.start).format('dddd, MMMM D, YYYY [at] h:mm A')}</Text>
+        <Text><strong>Doctor:</strong> {doctorName}</Text>
+        <Text><strong>Specialty:</strong> {specialty}</Text>
+        <Text><strong>Date:</strong> {appointmentTime.date}</Text>
+        <Text><strong>Time:</strong> {appointmentTime.time} ({timeZone})</Text>
+        <Text><strong>Status:</strong> {appointment.status === 'booked' ? 'Booked' : appointment.status}</Text>
+        <Text><strong>Appointment ID:</strong> {appointment.id}</Text>
         <Text size="sm" c="dimmed">
-          Give this NPI to the front desk if asked:
+          <strong>NPI:</strong> {npi}
         </Text>
-        <Text size="48px" fw={700}>
-          {npi}
-        </Text>
-        {npi && (
-          <CopyButton value={npi}>
-            {({ copied, copy }) => <Text onClick={copy} style={{ cursor: 'pointer' }}>{copied ? 'Copied!' : 'Copy NPI'}</Text>}
-          </CopyButton>
-        )}
+        <CopyButton value={npi}>
+          {({ copied, copy }) => <Text onClick={copy} style={{ cursor: 'pointer' }}>{copied ? 'Copied!' : 'Copy NPI'}</Text>}
+        </CopyButton>
       </Stack>
     </Document>
   );

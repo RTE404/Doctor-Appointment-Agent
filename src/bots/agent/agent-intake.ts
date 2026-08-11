@@ -4,16 +4,23 @@ import type { Communication } from '@medplum/fhirtypes';
 import { normalizeLlmSpecialty } from '../../config/specialties.js';
 import { loadPatientClinicalContext } from './lib/patientContext.js';
 import { INTAKE_SYSTEM_PROMPT, buildIntakeUserPrompt } from './lib/prompts.js';
+import { normalizeSchedulingPreferences } from './lib/schedulingPreferences.js';
+import type { SchedulingPreferences } from './lib/schedulingPreferences.js';
 
 interface GeminiIntakeResult {
   specialty: string;
   reason: string;
   summary: string;
+  preferences?: unknown;
 }
 
 export type IntakeInput = { patientId: string; complaintText: string };
 export type IntakeResult =
-  | { intent: { specialtyCode: string; specialtyLabel: string; reason: string }; summaryCommunicationId: string }
+  | {
+      intent: { specialtyCode: string; specialtyLabel: string; reason: string };
+      summaryCommunicationId: string;
+      preferences: SchedulingPreferences;
+    }
   | { needsClarification: true };
 
 type GeminiCaller = (apiKey: string, systemPrompt: string, userPrompt: string) => Promise<GeminiIntakeResult>;
@@ -91,5 +98,6 @@ export async function handler(medplum: MedplumClient, event: BotEvent<IntakeInpu
       reason: geminiResult.reason,
     },
     summaryCommunicationId: communication.id as string,
+    preferences: normalizeSchedulingPreferences(geminiResult.preferences),
   };
 }

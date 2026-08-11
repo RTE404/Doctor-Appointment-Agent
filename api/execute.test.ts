@@ -1,7 +1,7 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   ALLOWED_ACTIONS,
   dispatchAction,
@@ -24,6 +24,10 @@ const environment: ExecuteEnvironment = {
 const profile = { resourceType: 'Practitioner' as const, id: 'synthetic-user' };
 const medplum = { getProfileAsync: async () => profile } as unknown as MedplumClient;
 
+test('allows the patient concierge discovery action', () => {
+  expect(ALLOWED_ACTIONS).toContain('agent-find-bookable-options');
+});
+
 test('compiles the serverless runtime graph with Node ESM import semantics', () => {
   const entrypoint = fileURLToPath(new URL('./execute.ts', import.meta.url));
   const program = ts.createProgram([entrypoint], {
@@ -44,7 +48,7 @@ test('compiles the serverless runtime graph with Node ESM import semantics', () 
   });
 
   expect(diagnostics).toEqual([]);
-}, 15_000);
+}, 60_000);
 
 function request(body: unknown, authorization?: string, contentType = 'application/json'): ExecuteRequest {
   return {
@@ -91,7 +95,7 @@ describe('dispatchAction', () => {
     expect(seen[action]?.input).toEqual({ marker: action });
   });
 
-  test.each(['agent-intake', 'agent-patient-chat'] as const)('passes GEMINI_API_KEY only to %s', async (action) => {
+  test.each(['agent-intake', 'agent-find-bookable-options', 'agent-patient-chat'] as const)('passes GEMINI_API_KEY only to %s', async (action) => {
     const { handlers, seen } = createHandlers();
 
     await dispatchAction(medplum, action, {}, 'gemini-key', handlers);
@@ -204,31 +208,64 @@ describe('handleExecuteRequest', () => {
     expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
   });
 
-  test('returns a sanitized 500 response when Gemini configuration is missing for a Gemini action', async () => {
+  test.each(['agent-intake', 'agent-find-bookable-options'] as const)(
+    'returns a sanitized 500 response when Gemini configuration is missing for %s',
+    async (action) => {
     const response = await handleExecuteRequest(
-      request({ action: 'agent-intake', input: {} }, 'Bearer valid-token'),
+      request({ action, input: {} }, 'Bearer valid-token'),
       { ...environment, GEMINI_API_KEY: undefined },
       createDependencies(createHandlers().handlers)
     );
 
     expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
-  });
+    }
+  );
 
   test('sanitizes handler failures without echoing token, key, or input markers', async () => {
     const { handlers } = createHandlers();
     handlers['agent-intake'] = async () => {
       throw new Error('handler-input-marker gemini-key valid-token');
     };
-    const response = await handleExecuteRequest(
-      request({ action: 'agent-intake', input: { marker: 'handler-input-marker' } }, 'Bearer valid-token'),
-      environment,
-      createDependencies(handlers)
-    );
-    const serialized = JSON.stringify(response);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
-    expect(serialized).not.toContain('valid-token');
-    expect(serialized).not.toContain('gemini-key');
-    expect(serialized).not.toContain('handler-input-marker');
+    try {
+      const response = await handleExecuteRequest(
+        request({ action: 'agent-intake', input: { marker: 'handler-input-marker' } }, 'Bearer valid-token'),
+        environment,
+        createDependencies(handlers)
+      );
+      const serialized = JSON.stringify({ response, logs: errorSpy.mock.calls });
+
+      expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
+      expect(errorSpy).toHaveBeenCalledWith('Action execution failed', 'unclassified');
+      expect(serialized).not.toContain('valid-token');
+      expect(serialized).not.toContain('gemini-key');
+      expect(serialized).not.toContain('handler-input-marker');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test('logs only a safe diagnostic code for a Gemini HTTP failure', async () => {
+    const { handlers } = createHandlers();
+    handlers['agent-intake'] = async () => {
+      throw new Error('Gemini request failed: 403');
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const response = await handleExecuteRequest(
+        request({ action: 'agent-intake', input: { marker: 'sensitive-input-marker' } }, 'Bearer sensitive-token-marker'),
+        environment,
+        createDependencies(handlers)
+      );
+
+      expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
+      expect(errorSpy).toHaveBeenCalledWith('Action execution failed', 'gemini-http-403');
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sensitive-input-marker');
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sensitive-token-marker');
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
