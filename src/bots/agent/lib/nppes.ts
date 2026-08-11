@@ -2,6 +2,7 @@
 import type { DoctorCandidate } from './ranking.js';
 
 const NPPES_BASE_URL = 'https://npiregistry.cms.hhs.gov/api/';
+const NPPES_MAX_PAGE_SIZE = 200;
 
 interface NppesAddress {
   address_purpose: string;
@@ -43,15 +44,18 @@ function pickAddress(result: NppesResult, expectedState: string | undefined): Np
   return practiceMatch ? { ...practiceMatch, address_purpose: 'LOCATION' } : defaultAddress;
 }
 
-function mapResult(result: NppesResult, expectedState?: string): DoctorCandidate {
-  const primaryTaxonomy = result.taxonomies.find((t) => t.primary) ?? result.taxonomies[0];
+function mapResult(result: NppesResult, expectedState?: string, expectedNuccCode?: string): DoctorCandidate {
+  const matchedTaxonomy =
+    (expectedNuccCode ? result.taxonomies.find((t) => t.code === expectedNuccCode) : undefined) ??
+    result.taxonomies.find((t) => t.primary) ??
+    result.taxonomies[0];
   const address = pickAddress(result, expectedState);
   return {
     npi: result.number,
     firstName: result.basic.first_name,
     lastName: result.basic.last_name,
-    nuccCode: primaryTaxonomy.code,
-    nuccDisplay: primaryTaxonomy.desc,
+    nuccCode: matchedTaxonomy.code,
+    nuccDisplay: matchedTaxonomy.desc,
     address: {
       line: address?.address_1 ? [address.address_1] : undefined,
       city: address?.city,
@@ -105,7 +109,10 @@ async function nppesFetch(taxonomyDescription: string, city: string | undefined,
 
 /**
  * Searches NPPES's public registry for active doctors matching a taxonomy
- * description and location. `state` may be a 2-letter code or a full US
+ * description, exact NUCC code, and location. NPPES treats taxonomy descriptions
+ * as text searches, so the exact code check prevents similarly named specialties
+ * (for example, Dentist, General Practice) from entering physician results.
+ * `state` may be a 2-letter code or a full US
  * state name (normalized automatically — every seeded patient stores the
  * full name, and NPPES requires the code). Falls back to a state-only
  * search if an exact city+state search returns nothing, rather than
@@ -117,14 +124,19 @@ export async function searchNppesDoctors(
   taxonomyDescription: string,
   city: string,
   state: string,
+  expectedNuccCode: string,
   limit = 20
 ): Promise<DoctorCandidate[]> {
   const normalizedState = normalizeState(state);
-  let results = await nppesFetch(taxonomyDescription, city, normalizedState, limit);
+  let results = (await nppesFetch(taxonomyDescription, city, normalizedState, NPPES_MAX_PAGE_SIZE)).filter((result) =>
+    result.taxonomies.some((taxonomy) => taxonomy.code === expectedNuccCode)
+  );
   if (results.length === 0 && city) {
-    results = await nppesFetch(taxonomyDescription, undefined, normalizedState, limit);
+    results = (await nppesFetch(taxonomyDescription, undefined, normalizedState, NPPES_MAX_PAGE_SIZE)).filter((result) =>
+      result.taxonomies.some((taxonomy) => taxonomy.code === expectedNuccCode)
+    );
   }
-  return results.map((r) => mapResult(r, normalizedState));
+  return results.slice(0, limit).map((r) => mapResult(r, normalizedState, expectedNuccCode));
 }
 
 /** Single-result lookup by NPI. Returns undefined (not an error) if NPPES has no record. */

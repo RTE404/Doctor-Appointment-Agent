@@ -47,9 +47,13 @@ describe('agent-find-doctors handler', () => {
   test('falls through to NPPES-only results when no previous match exists', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
-    __setNppesSearcherForTests(async () => [
-      { npi: '9999999999', firstName: 'New', lastName: 'Doc', nuccCode: '207RC0000X', nuccDisplay: 'Cardiovascular Disease', address: { postalCode: '02108' } },
-    ]);
+    let requestedNuccCode: unknown;
+    __setNppesSearcherForTests(async (_taxonomyDescription, _city, _state, exactNuccCode) => {
+      requestedNuccCode = exactNuccCode;
+      return [
+        { npi: '9999999999', firstName: 'New', lastName: 'Doc', nuccCode: '207RC0000X', nuccDisplay: 'Cardiovascular Disease', address: { postalCode: '02108' } },
+      ];
+    });
 
     const result = await handler(medplum, {
       bot: { reference: 'Bot/123' },
@@ -60,5 +64,6 @@ describe('agent-find-doctors handler', () => {
 
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]).toMatchObject({ source: 'nppes', npi: '9999999999' });
+    expect(requestedNuccCode).toBe('207RC0000X');
   });
 });

@@ -34,7 +34,12 @@ export async function handler(medplum: MedplumClient, event: BotEvent<FindDoctor
 
   const specialtyDef = SPECIALTY_TABLE.find((s) => s.nuccCode === specialtyCode);
   const nppesResults = specialtyDef
-    ? await nppesSearcher(specialtyDef.nppesTaxonomyDescription, patient.address?.[0]?.city ?? '', patient.address?.[0]?.state ?? '')
+    ? await nppesSearcher(
+        specialtyDef.nppesTaxonomyDescription,
+        patient.address?.[0]?.city ?? '',
+        patient.address?.[0]?.state ?? '',
+        specialtyCode
+      )
     : [];
   const ranked = rankCandidates(patientCoords(patient), nppesResults);
   const nppesCandidates: FoundCandidate[] = ranked.slice(0, 10).map((c) => ({ ...c, source: 'nppes' as const, npi: c.npi }));

@@ -21,7 +21,7 @@ describe('searchNppesDoctors', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'MA');
+    const result = await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'MA', '207RC0000X');
 
     expect(result).toStrictEqual([
       {
@@ -39,14 +39,14 @@ describe('searchNppesDoctors', () => {
 
   test('propagates a network failure to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
-    await expect(searchNppesDoctors('Cardiology', 'Boston', 'MA')).rejects.toThrow('network down');
+    await expect(searchNppesDoctors('Cardiology', 'Boston', 'MA', '207RC0000X')).rejects.toThrow('network down');
   });
 
   test('normalizes a full state name to its 2-letter code — every seeded patient stores the full name, and NPPES requires the code', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [SAMPLE_RESULT] }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'Massachusetts');
+    await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'Massachusetts', '207RC0000X');
 
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('state=MA'));
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('Massachusetts'));
@@ -59,12 +59,54 @@ describe('searchNppesDoctors', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [SAMPLE_RESULT] }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await searchNppesDoctors('Cardiovascular Disease', 'Nowheresville', 'MA');
+    const result = await searchNppesDoctors('Cardiovascular Disease', 'Nowheresville', 'MA', '207RC0000X');
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toContain('city=Nowheresville');
     expect(fetchMock.mock.calls[1][0]).not.toContain('city=');
     expect(result).toHaveLength(1);
+  });
+
+  test('rejects taxonomy-description false positives and retries state-wide using the exact NUCC code', async () => {
+    const dentistResult = {
+      number: '1427128701',
+      basic: { first_name: 'Peter', last_name: 'Macgillivray' },
+      taxonomies: [{ code: '1223G0001X', desc: 'Dentist, General Practice', primary: true }],
+      addresses: [{ address_purpose: 'LOCATION', city: 'Sutton', state: 'MA' }],
+    };
+    const physicianResult = {
+      number: '1111111111',
+      basic: { first_name: 'Grace', last_name: 'Physician' },
+      taxonomies: [
+        { code: '207Q00000X', desc: 'Family Medicine', primary: true },
+        { code: '208D00000X', desc: 'General Practice Physician', primary: false },
+      ],
+      addresses: [{ address_purpose: 'LOCATION', city: 'Worcester', state: 'MA' }],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [dentistResult] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [physicianResult] }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await searchNppesDoctors(
+      'General Practice',
+      'Sutton',
+      'MA',
+      '208D00000X'
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toContain('city=Sutton');
+    expect(fetchMock.mock.calls[0][0]).toContain('limit=200');
+    expect(fetchMock.mock.calls[1][0]).not.toContain('city=');
+    expect(fetchMock.mock.calls[1][0]).toContain('limit=200');
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      npi: '1111111111',
+      nuccCode: '208D00000X',
+      nuccDisplay: 'General Practice Physician',
+    });
   });
 
   // Confirmed live against the real NPPES API: a state+city search can match
@@ -89,7 +131,7 @@ describe('searchNppesDoctors', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [mismatchedLocationResult] }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'MA');
+    const result = await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'MA', '207RC0000X');
 
     expect(result[0].address).toStrictEqual({ line: ['55 Fruit St'], city: 'Boston', state: 'MA', postalCode: '021142696' });
     expect(result[0].phone).toBe('617-726-2000');
@@ -113,7 +155,7 @@ describe('searchNppesDoctors', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [bothMatchResult] }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'MA');
+    const result = await searchNppesDoctors('Cardiovascular Disease', 'Boston', 'MA', '207RC0000X');
 
     expect(result[0].address.city).toBe('Boston');
   });
