@@ -34,13 +34,13 @@ test('forwards the current Medplum token and action envelope', async () => {
 
 test('rejects locally when the session has no access token', async () => {
   await expect(executeAction(medplumWithToken(undefined), 'agent-intake', {})).rejects.toEqual(
-    new Error('Your session has expired. Please sign in again.')
+    new Error('Your session has expired. Please enter the demo code again.')
   );
 });
 
 test.each([
   [400, 'The request could not be processed.'],
-  [401, 'Your session has expired. Please sign in again.'],
+  [401, 'Your session has expired. Please enter the demo code again.'],
   [403, 'This session cannot access the configured project.'],
   [500, 'The appointment service is temporarily unavailable.'],
 ])('maps HTTP %i to a sanitized message', async (status, message) => {

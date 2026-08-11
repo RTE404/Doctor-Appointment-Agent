@@ -5,7 +5,7 @@ import { MantineProvider, createTheme } from '@mantine/core';
 import '@mantine/core/styles.css';
 import { Notifications } from '@mantine/notifications';
 import '@mantine/notifications/styles.css';
-import { MedplumClient } from '@medplum/core';
+import { ClientStorage, MedplumClient, MemoryStorage } from '@medplum/core';
 import { MedplumProvider } from '@medplum/react';
 import '@medplum/react/styles.css';
 import { StrictMode } from 'react';
@@ -13,12 +13,38 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 import { App } from './App';
 import { getConfig } from './config';
+import { clearBrowserDemoAccessToken, clearDemoSession, getBrowserDemoAccessToken } from './demoSession';
+
+const demoAccessToken = getBrowserDemoAccessToken();
 
 const medplum = new MedplumClient({
-  onUnauthenticated: () => (window.location.href = '/'),
+  onUnauthenticated: () => {
+    clearBrowserDemoAccessToken();
+    window.location.replace('/');
+  },
   cacheTime: 5000,
   baseUrl: getConfig().baseUrl,
+  accessToken: demoAccessToken,
+  storage: new ClientStorage(new MemoryStorage()),
 });
+
+medplum.addEventListener('change', () => {
+  if (!medplum.getAccessToken()) {
+    clearBrowserDemoAccessToken();
+  }
+});
+
+if (demoAccessToken) {
+  medplum.getProfileAsync().then((profile) => {
+    if (!profile) {
+      clearDemoSession(medplum);
+      window.location.replace('/');
+    }
+  }).catch(() => {
+    clearDemoSession(medplum);
+    window.location.replace('/');
+  });
+}
 
 const theme = createTheme({
   headings: {

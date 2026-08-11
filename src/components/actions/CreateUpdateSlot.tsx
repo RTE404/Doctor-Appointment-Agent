@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Modal } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { createReference, getQuestionnaireAnswers, normalizeErrorString } from '@medplum/core';
-import type { Bundle, Questionnaire, QuestionnaireResponse, Reference, Schedule, Slot } from '@medplum/fhirtypes';
-import { Loading, QuestionnaireForm, useMedplum } from '@medplum/react';
-import { IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
+import { createReference, normalizeErrorString } from '@medplum/core';
+import type { Questionnaire, QuestionnaireResponse, Slot } from '@medplum/fhirtypes';
+import { Loading, QuestionnaireForm } from '@medplum/react';
+import { IconCircleOff } from '@tabler/icons-react';
 import { useContext } from 'react';
 import type { JSX } from 'react';
 import type { Event } from 'react-big-calendar';
 import { ScheduleContext } from '../../Schedule.context';
-import type { BlockAvailabilityEvent } from '../../bots/core/block-availability';
-import { executeAction } from '../../api/executeAction';
 
 interface CreateUpdateSlotProps {
   event: Event | undefined;
@@ -30,8 +28,7 @@ interface CreateUpdateSlotProps {
  * @returns A React component that displays the modal.
  */
 export function CreateUpdateSlot(props: CreateUpdateSlotProps): JSX.Element {
-  const { event, opened, handlers, onSlotsUpdated } = props;
-  const medplum = useMedplum();
+  const { event, opened, handlers } = props;
   const { schedule } = useContext(ScheduleContext);
 
   const editingSlot: Slot = event?.resource;
@@ -41,36 +38,9 @@ export function CreateUpdateSlot(props: CreateUpdateSlotProps): JSX.Element {
   }
 
   // If an editing slot was passed, update it otherwise create a new slot
-  async function handleQuestionnaireSubmit(formData: QuestionnaireResponse): Promise<void> {
-    const answers = getQuestionnaireAnswers(formData);
-    const start = answers['start-date'].valueDateTime as string;
-    const end = answers['end-date'].valueDateTime as string;
-    const scheduleReference = formData.subject as Reference<Schedule>;
-
+  async function handleQuestionnaireSubmit(_formData: QuestionnaireResponse): Promise<void> {
     try {
-      if (editingSlot) {
-        // Edit existing slot
-        await medplum.updateResource({
-          ...editingSlot,
-          start,
-          end,
-        });
-      } else {
-        // Create a new blocked-time slot
-        const input: BlockAvailabilityEvent = {
-          schedule: scheduleReference,
-          start,
-          end,
-        };
-        await executeAction<BlockAvailabilityEvent, Bundle>(medplum, 'block-availability', input);
-      }
-
-      onSlotsUpdated();
-      showNotification({
-        icon: <IconCircleCheck />,
-        title: 'Success',
-        message: editingSlot ? 'Slot updated' : 'Slot created',
-      });
+      throw new Error('Schedule editing is unavailable in the shared demo');
     } catch (err) {
       showNotification({
         color: 'red',

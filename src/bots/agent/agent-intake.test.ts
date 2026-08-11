@@ -51,6 +51,10 @@ describe('agent-intake handler', () => {
     expect(communication.recipient).toBeUndefined();
     expect(communication.sender).toStrictEqual({ reference: `Device/${agentDevice.id}` });
     expect(communication.meta?.tag).toContainEqual({ code: 'ai-generated' });
+    expect(communication.meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
     expect(communication.reasonCode).toStrictEqual([{ text: 'Chest discomfort during exercise' }]);
     expect(communication.note).toStrictEqual([{ text: 'My chest hurts when I run' }]);
     expect(communication.topic?.coding).toContainEqual({

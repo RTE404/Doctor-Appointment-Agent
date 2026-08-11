@@ -2,6 +2,7 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import { loadCompletePatientContext } from './lib/completePatientContext.js';
 import { CHAT_SYSTEM_PROMPT, buildChatUserPrompt, containsInterpretationLanguage } from './lib/prompts.js';
+import { withDemoGeneratedTag } from '../../demo/demoTag.js';
 
 const REFUSAL =
   "I can only relay information from the patient's record — for clinical interpretation, please consult the record directly.";
@@ -84,6 +85,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<ChatInput>
     sender: { reference: practitionerReference },
     payload: [{ contentString: question }],
     sent: new Date().toISOString(),
+    meta: withDemoGeneratedTag(),
     partOf: threadId ? [{ reference: `Communication/${threadId}` }] : undefined,
   });
 
@@ -105,7 +107,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<ChatInput>
     sender: { reference: `Device/${agentDevice.id}` },
     payload: [{ contentString: answer }],
     sent: new Date().toISOString(),
-    meta: { tag: [{ code: 'ai-generated' }] },
+    meta: withDemoGeneratedTag({ tag: [{ code: 'ai-generated' }] }),
     partOf: [{ reference: `Communication/${threadId ?? questionCommunication.id}` }],
   });
 

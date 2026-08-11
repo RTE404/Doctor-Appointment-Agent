@@ -6,7 +6,14 @@
   "functions": {
     "api/execute.ts": {
       "maxDuration": 60
+    },
+    "api/demo-session.ts": {
+      "maxDuration": 60
+    },
+    "api/reset-demo.ts": {
+      "maxDuration": 60
     }
   },
+  "crons": [{ "path": "/api/reset-demo", "schedule": "30 20 * * *" }],
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

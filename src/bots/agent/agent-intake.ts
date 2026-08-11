@@ -1,6 +1,7 @@
 // src/bots/agent/agent-intake.ts
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import type { Communication } from '@medplum/fhirtypes';
+import { withDemoGeneratedTag } from '../../demo/demoTag.js';
 import { normalizeLlmSpecialty } from '../../config/specialties.js';
 import { loadPatientClinicalContext } from './lib/patientContext.js';
 import { INTAKE_SYSTEM_PROMPT, buildIntakeUserPrompt } from './lib/prompts.js';
@@ -81,7 +82,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<IntakeInpu
     subject: { reference: `Patient/${patientId}` },
     sender: { reference: `Device/${agentDevice.id}` },
     payload: [{ contentString: geminiResult.summary }],
-    meta: { tag: [{ code: 'ai-generated' }] },
+    meta: withDemoGeneratedTag({ tag: [{ code: 'ai-generated' }] }),
   });
 
   return {

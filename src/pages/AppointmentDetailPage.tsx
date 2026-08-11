@@ -31,7 +31,7 @@ export function AppointmentDetailPage(): JSX.Element {
       </Grid.Col>
       <Grid.Col span={3}>
         <Document p="xs">
-          <AppointmentActions appointment={appointment} patient={patient} />
+          <AppointmentActions appointment={appointment} />
         </Document>
       </Grid.Col>
     </Grid>

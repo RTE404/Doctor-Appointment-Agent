@@ -9,8 +9,6 @@ import { LandingPage } from './pages/LandingPage';
 import { PatientPage } from './pages/PatientPage';
 import { ResourcePage } from './pages/ResourcePage';
 import { SearchPage } from './pages/SearchPage';
-import { SignInPage } from './pages/SignInPage';
-import { UploadDataPage } from './pages/UploadDataPage';
 import { BookingContext } from './booking.context';
 import type { BookingState } from './booking.context';
 import { LEGACY_PROVIDER_PATHS, getOperatorHomePath, getOperatorMenus } from './operatorMode';
@@ -33,14 +31,23 @@ export function App(): JSX.Element | null {
     return <Loading />;
   }
 
+  if (!profile) {
+    return (
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <AppShell logo={<Logo size={24} />} menus={getOperatorMenus()}>
       <BookingContext.Provider value={{ booking, setBooking }}>
         <ErrorBoundary>
           <Suspense fallback={<Loading />}>
             <Routes>
-              <Route path="/" element={profile ? <Navigate to={operatorHomePath} replace /> : <LandingPage />} />
-              <Route path="/signin" element={<SignInPage />} />
+              <Route path="/" element={<Navigate to={operatorHomePath} replace />} />
+              <Route path="/signin" element={<Navigate to={operatorHomePath} replace />} />
               {LEGACY_PROVIDER_PATHS.map((path) => (
                 <Route key={path} path={path} element={<Navigate to={operatorHomePath} replace />} />
               ))}
@@ -52,7 +59,7 @@ export function App(): JSX.Element | null {
                 <Route index element={<AppointmentDetailPage />} />
                 <Route path="*" element={<AppointmentDetailPage />} />
               </Route>
-              <Route path="/upload/core" element={<UploadDataPage uploadType="core" />} />
+              <Route path="/upload/core" element={<Navigate to={operatorHomePath} replace />} />
               <Route path="/agent" element={<PatientPickerPage />} />
               <Route path="/agent/:patientId" element={<PatientHistoryPage />} />
               <Route path="/agent/:patientId/doctors" element={<DoctorResultsPage />} />

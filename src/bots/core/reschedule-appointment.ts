@@ -2,6 +2,7 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import { OperationOutcomeError, resolveId } from '@medplum/core';
 import type { Appointment, Bundle, Communication, Slot } from '@medplum/fhirtypes';
+import { isDemoGenerated, withDemoGeneratedTag } from '../../demo/demoTag.js';
 
 export type RescheduleInput = { appointmentId: string; newStart: string; newEnd: string };
 export type RescheduleResult = { ok: true; appointment: Appointment } | { ok: false; reason: 'slot_taken' };
@@ -20,6 +21,12 @@ function extractBookedAppointment(bundle: Bundle): Appointment {
 export async function handler(medplum: MedplumClient, event: BotEvent<RescheduleInput>): Promise<RescheduleResult> {
   const { appointmentId, newStart, newEnd } = event.input;
   const original = await medplum.readResource('Appointment', appointmentId);
+  if (!isDemoGenerated(original.meta)) {
+    throw new Error('Only demo-generated appointments can be rescheduled');
+  }
+  if (original.status !== 'pending' && original.status !== 'booked') {
+    throw new Error('Only pending or booked appointments can be rescheduled');
+  }
   const oldSlotId = resolveId(original.slot?.[0]);
   if (!oldSlotId) {
     throw new Error('Original appointment has no slot to reschedule from');
@@ -39,6 +46,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<Reschedule
   };
   const proposedAppointment: Appointment = {
     resourceType: 'Appointment',
+    meta: withDemoGeneratedTag(original.meta),
     status: 'proposed',
     start: newStart,
     end: newEnd,

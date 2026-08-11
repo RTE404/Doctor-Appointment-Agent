@@ -1,4 +1,4 @@
-import { IconDatabaseImport, IconMessageCircle2, IconStethoscope, IconUser } from '@tabler/icons-react';
+import { IconMessageCircle2, IconStethoscope, IconUser } from '@tabler/icons-react';
 import type { JSX } from 'react';
 
 export const LEGACY_PROVIDER_PATHS = [
@@ -20,10 +20,6 @@ export function getOperatorMenus(): {
     {
       title: 'Charts',
       links: [{ icon: <IconUser />, label: 'Patients', href: '/Patient' }],
-    },
-    {
-      title: 'Upload Data',
-      links: [{ icon: <IconDatabaseImport />, label: 'Upload Core ValueSets', href: '/upload/core' }],
     },
     {
       title: 'Patient Agent',

@@ -65,7 +65,10 @@ describe('agent-patient-chat handler', () => {
     expect(result.answer).toBe('The record shows no known allergies.');
     const question = await medplum.readResource('Communication', result.threadId);
     expect(question.sender).toStrictEqual({ reference: `Practitioner/${practitioner.id}` });
-    expect(question.meta?.tag).toBeUndefined();
+    expect(question.meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
 
     // The search PARAMETER code is 'part-of' (kebab-case) even though the
     // resource FIELD is Communication.partOf (camelCase, FHIR JSON
@@ -75,6 +78,10 @@ describe('agent-patient-chat handler', () => {
     expect(answers).toHaveLength(1);
     expect(answers[0].sender).toStrictEqual({ reference: `Device/${agentDevice.id}` });
     expect(answers[0].meta?.tag).toContainEqual({ code: 'ai-generated' });
+    expect(answers[0].meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
   });
 
   test('throws when no booking relationship exists between this NPI and this patient', async () => {

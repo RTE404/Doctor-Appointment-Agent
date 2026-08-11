@@ -4,7 +4,7 @@ import type { ActionName } from '../../api/execute';
 
 const ERROR_MESSAGES: Record<number, string> = {
   400: 'The request could not be processed.',
-  401: 'Your session has expired. Please sign in again.',
+  401: 'Your session has expired. Please enter the demo code again.',
   403: 'This session cannot access the configured project.',
   500: 'The appointment service is temporarily unavailable.',
 };

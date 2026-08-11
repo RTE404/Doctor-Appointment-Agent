@@ -2,6 +2,7 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import { OperationOutcomeError } from '@medplum/core';
 import type { Appointment, Bundle, Communication, Schedule, Slot } from '@medplum/fhirtypes';
+import { withDemoGeneratedTag } from '../../demo/demoTag.js';
 
 export type BookInput = {
   patientId: string;
@@ -159,6 +160,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
 
   const appointmentToBook: Appointment = {
     ...proposedAppointment,
+    meta: withDemoGeneratedTag(proposedAppointment.meta),
     participant: [...(proposedAppointment.participant ?? []), { actor: { reference: `Patient/${patientId}` }, status: 'accepted' }],
     description: reason,
     comment: complaintText,

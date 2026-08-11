@@ -4,27 +4,31 @@ import { Button, Stack, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { normalizeErrorString } from '@medplum/core';
-import type { Appointment, Encounter, Patient } from '@medplum/fhirtypes';
+import type { Appointment, Encounter } from '@medplum/fhirtypes';
 import { Loading, useMedplum } from '@medplum/react';
 import { IconCancel, IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router';
+import { executeAction } from '../../api/executeAction';
+import type { CancelAppointmentInput, CancelAppointmentResult } from '../../bots/core/cancel-appointment';
+import { isDemoGenerated } from '../../demo/demoTag';
 import { CreateEncounter } from './CreateEncounter';
 import { RescheduleAppointment } from './RescheduleAppointment';
 
 interface AppointmentActionsProps {
   appointment: Appointment;
-  patient: Patient;
 }
 
 export function AppointmentActions(props: AppointmentActionsProps): JSX.Element {
-  const { appointment, patient } = props;
+  const { appointment } = props;
   const medplum = useMedplum();
   const navigate = useNavigate();
   const [createEncounterOpened, createEncounterHandlers] = useDisclosure(false);
   const [rescheduleOpened, rescheduleHandlers] = useDisclosure(false);
   const [encounter, setEncounter] = useState<Encounter | undefined | boolean>(false); // `false` means it was not loaded yet
+  const canMutate = isDemoGenerated(appointment.meta);
+  const canRescheduleOrCancel = canMutate && (appointment.status === 'pending' || appointment.status === 'booked');
 
   const refreshEncounter = useCallback(async (): Promise<void> => {
     try {
@@ -45,10 +49,11 @@ export function AppointmentActions(props: AppointmentActionsProps): JSX.Element 
 
   async function handleCancelAppointment(): Promise<void> {
     try {
-      // Call Medplum's native $cancel operation directly — no custom bot.
-      // Confirmed atomic (serializable transaction): cancels the Appointment
-      // and deletes its Slot(s) in one step.
-      await medplum.post(medplum.fhirUrl('Appointment', appointment.id as string, '$cancel'), {});
+      // The server re-reads the tagged Appointment, then invokes Medplum's
+      // native atomic $cancel operation with the server-only worker.
+      await executeAction<CancelAppointmentInput, CancelAppointmentResult>(medplum, 'cancel-appointment', {
+        appointmentId: appointment.id as string,
+      });
 
       navigate('/agent')?.catch(console.error);
       showNotification({
@@ -70,7 +75,6 @@ export function AppointmentActions(props: AppointmentActionsProps): JSX.Element 
       <Title>Appointment Actions</Title>
       <CreateEncounter
         appointment={appointment}
-        patient={patient}
         opened={createEncounterOpened}
         handlers={createEncounterHandlers}
       />
@@ -79,19 +83,19 @@ export function AppointmentActions(props: AppointmentActionsProps): JSX.Element 
        * Only show "Create Encounter" if appointment is not already completed or cancelled
        * and after we finish trying to load the encounter and it doesn't already exist
        */}
-      {!['fulfilled', 'cancelled'].includes(appointment.status) && !encounter && encounter !== false ? (
+      {canMutate && appointment.status === 'booked' && !encounter && encounter !== false ? (
         <Button leftSection={<IconCircleCheck size={16} />} onClick={() => createEncounterHandlers.open()}>
           Create Encounter
         </Button>
       ) : null}
       {/* Only show "Reschedule" if not already completed */}
-      {appointment.status !== 'fulfilled' ? (
+      {canRescheduleOrCancel ? (
         <Button leftSection={<IconCircleCheck size={16} />} onClick={() => rescheduleHandlers.open()}>
           Reschedule
         </Button>
       ) : null}
       {/* Only show "Cancel" if not already cancelled */}
-      {appointment.status !== 'cancelled' ? (
+      {canRescheduleOrCancel ? (
         <Button leftSection={<IconCancel size={16} />} onClick={() => handleCancelAppointment()}>
           Cancel
         </Button>

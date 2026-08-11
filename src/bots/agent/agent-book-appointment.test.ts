@@ -131,6 +131,10 @@ describe('agent-book-appointment handler', () => {
       actor: { reference: `Patient/${patient.id}` },
       status: 'accepted',
     });
+    expect(capturedRequest.parameter[0].resource.meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok:true');

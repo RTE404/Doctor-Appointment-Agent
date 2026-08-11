@@ -102,13 +102,15 @@ async function main(): Promise<void> {
   // Validate, don't cast — a missing credential silently became the
   // literal string "undefined" in an earlier version of this function,
   // producing a confusing auth failure instead of a clear configuration error.
-  const { MEDPLUM_BASE_URL, MEDPLUM_CLIENT_ID, MEDPLUM_CLIENT_SECRET } = process.env;
-  if (!MEDPLUM_BASE_URL || !MEDPLUM_CLIENT_ID || !MEDPLUM_CLIENT_SECRET) {
-    throw new Error('Missing required environment variables: MEDPLUM_BASE_URL, MEDPLUM_CLIENT_ID, MEDPLUM_CLIENT_SECRET (see .env)');
+  const { MEDPLUM_BASE_URL, SEED_MEDPLUM_CLIENT_ID, SEED_MEDPLUM_CLIENT_SECRET } = process.env;
+  if (!MEDPLUM_BASE_URL || !SEED_MEDPLUM_CLIENT_ID || !SEED_MEDPLUM_CLIENT_SECRET) {
+    throw new Error(
+      'Missing required environment variables: MEDPLUM_BASE_URL, SEED_MEDPLUM_CLIENT_ID, SEED_MEDPLUM_CLIENT_SECRET (see .env)'
+    );
   }
 
   const medplum = new MedplumClient({ baseUrl: MEDPLUM_BASE_URL });
-  await medplum.startClientLogin(MEDPLUM_CLIENT_ID, MEDPLUM_CLIENT_SECRET);
+  await medplum.startClientLogin(SEED_MEDPLUM_CLIENT_ID, SEED_MEDPLUM_CLIENT_SECRET);
 
   console.log('Uploading bootstrap config (HealthcareServices, Device, CodeSystem)...');
   const bootstrapBundle = JSON.parse(readFileSync(join(__dirname, '../../data/core/agent-config.json'), 'utf-8')) as Bundle;

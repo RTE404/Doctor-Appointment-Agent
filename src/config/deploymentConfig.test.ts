@@ -20,10 +20,14 @@ describe('deployment configuration', () => {
   test('keeps Vercel routing and execution limits explicit', () => {
     const vercel = JSON.parse(readProjectFile('vercel.json')) as {
       functions: Record<string, { maxDuration: number }>;
+      crons: { path: string; schedule: string }[];
       rewrites: { source: string; destination: string }[];
     };
 
     expect(vercel.functions['api/execute.ts'].maxDuration).toBe(60);
+    expect(vercel.functions['api/demo-session.ts'].maxDuration).toBe(60);
+    expect(vercel.functions['api/reset-demo.ts'].maxDuration).toBe(60);
+    expect(vercel.crons).toEqual([{ path: '/api/reset-demo', schedule: '30 20 * * *' }]);
     expect(vercel.rewrites).toEqual([{ source: '/(.*)', destination: '/index.html' }]);
   });
 
@@ -36,8 +40,22 @@ describe('deployment configuration', () => {
     expect(viteConfig).not.toContain('copyFileSync');
     expect(defaults).not.toContain('GOOGLE_');
     expect(defaults).not.toContain('GEMINI_API_KEY');
-    expect(defaults).not.toContain('MEDPLUM_CLIENT_SECRET');
+    expect(defaults).toMatch(/^DEMO_ACCESS_CODE=''$/m);
+    expect(defaults).toMatch(/^DEMO_MEDPLUM_CLIENT_SECRET=''$/m);
+    expect(defaults).toMatch(/^DEMO_WORKER_CLIENT_SECRET=''$/m);
+    expect(defaults).toMatch(/^SEED_MEDPLUM_CLIENT_SECRET=''$/m);
+    expect(defaults).not.toMatch(/^MEDPLUM_CLIENT_SECRET=/m);
+    expect(defaults).toMatch(/^CRON_SECRET=''$/m);
+    expect(publicConfig).not.toContain('clientId');
     expect(publicConfig).not.toContain('GEMINI_API_KEY');
+    expect(publicConfig).not.toContain('DEMO_');
+  });
+
+  test('does not resume an old personal Medplum login from browser localStorage', () => {
+    const main = readProjectFile('src/main.tsx');
+
+    expect(main).toContain('storage: new ClientStorage(new MemoryStorage())');
+    expect(main).toContain("medplum.addEventListener('change'");
   });
 
   test('uses a Vercel upload allowlist and ignores local Vercel state', () => {

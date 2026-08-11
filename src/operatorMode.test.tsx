@@ -22,7 +22,6 @@ describe('operator-mode navigation', () => {
 
     expect(links).toStrictEqual([
       { label: 'Patients', href: '/Patient' },
-      { label: 'Upload Core ValueSets', href: '/upload/core' },
       { label: 'New Request', href: '/agent' },
       { label: 'Doctor Desk', href: '/desk' },
     ]);

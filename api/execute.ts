@@ -1,8 +1,12 @@
 import { createReference, MedplumClient } from '@medplum/core';
 import type { BotEvent, ProfileResource } from '@medplum/core';
+import type { ClientApplication } from '@medplum/fhirtypes';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handler as blockAvailabilityHandler } from '../src/bots/core/block-availability.js';
-import type { BlockAvailabilityEvent } from '../src/bots/core/block-availability.js';
+import { loginClientApplication } from './server/medplumClientApplication.js';
+import { handler as cancelAppointmentHandler } from '../src/bots/core/cancel-appointment.js';
+import type { CancelAppointmentInput } from '../src/bots/core/cancel-appointment.js';
+import { handler as completeAppointmentHandler } from '../src/bots/core/complete-appointment.js';
+import type { CompleteAppointmentInput } from '../src/bots/core/complete-appointment.js';
 import { handler as rescheduleAppointmentHandler } from '../src/bots/core/reschedule-appointment.js';
 import type { RescheduleInput } from '../src/bots/core/reschedule-appointment.js';
 import { handler as agentBookAppointmentHandler } from '../src/bots/agent/agent-book-appointment.js';
@@ -17,7 +21,8 @@ import { handler as agentPatientChatHandler } from '../src/bots/agent/agent-pati
 import type { ChatInput } from '../src/bots/agent/agent-patient-chat.js';
 
 export const ALLOWED_ACTIONS = [
-  'block-availability',
+  'cancel-appointment',
+  'complete-appointment',
   'reschedule-appointment',
   'agent-intake',
   'agent-find-doctors',
@@ -41,6 +46,9 @@ export interface ExecuteResponse {
 export interface ExecuteEnvironment {
   MEDPLUM_BASE_URL?: string;
   MEDPLUM_PROJECT_ID?: string;
+  DEMO_MEDPLUM_CLIENT_ID?: string;
+  DEMO_WORKER_CLIENT_ID?: string;
+  DEMO_WORKER_CLIENT_SECRET?: string;
   GEMINI_API_KEY?: string;
 }
 
@@ -58,17 +66,21 @@ interface AuthenticatedSession {
   projectId?: string;
 }
 
-type AuthenticatedProfile = ProfileResource & { id: string };
+type AuthenticatedProfile = (ProfileResource | ClientApplication) & { id: string };
 
 export interface ExecuteDependencies {
   authenticate: (accessToken: string, environment: ExecuteEnvironment) => Promise<AuthenticatedSession>;
+  loginWorker: (environment: ExecuteEnvironment) => Promise<{ medplum: MedplumClient }>;
   handlers?: Record<ActionName, RuntimeActionHandler>;
 }
 
 const GEMINI_ACTIONS = new Set<ActionName>(['agent-intake', 'agent-patient-chat']);
 
 const HANDLERS: Record<ActionName, RuntimeActionHandler> = {
-  'block-availability': (medplum, event) => blockAvailabilityHandler(medplum, event as unknown as BotEvent<BlockAvailabilityEvent>),
+  'cancel-appointment': (medplum, event) =>
+    cancelAppointmentHandler(medplum, event as BotEvent<CancelAppointmentInput>),
+  'complete-appointment': (medplum, event) =>
+    completeAppointmentHandler(medplum, event as BotEvent<CompleteAppointmentInput>),
   'reschedule-appointment': (medplum, event) => rescheduleAppointmentHandler(medplum, event as BotEvent<RescheduleInput>),
   'agent-intake': (medplum, event) => agentIntakeHandler(medplum, event as BotEvent<IntakeInput>),
   'agent-find-doctors': (medplum, event) => agentFindDoctorsHandler(medplum, event as BotEvent<FindDoctorsInput>),
@@ -87,7 +99,17 @@ async function authenticate(accessToken: string, environment: ExecuteEnvironment
   return { medplum, profile, projectId: medplum.getProject()?.id };
 }
 
-const productionDependencies: ExecuteDependencies = { authenticate, handlers: HANDLERS };
+async function loginWorker(environment: ExecuteEnvironment): Promise<{ medplum: MedplumClient }> {
+  const session = await loginClientApplication({
+    MEDPLUM_BASE_URL: environment.MEDPLUM_BASE_URL,
+    MEDPLUM_PROJECT_ID: environment.MEDPLUM_PROJECT_ID,
+    DEMO_MEDPLUM_CLIENT_ID: environment.DEMO_WORKER_CLIENT_ID,
+    DEMO_MEDPLUM_CLIENT_SECRET: environment.DEMO_WORKER_CLIENT_SECRET,
+  });
+  return { medplum: session.client as unknown as MedplumClient };
+}
+
+const productionDependencies: ExecuteDependencies = { authenticate, loginWorker, handlers: HANDLERS };
 
 export async function dispatchAction(
   medplum: MedplumClient,
@@ -142,7 +164,13 @@ export async function handleExecuteRequest(
     return { status: 401, body: { error: 'Authentication required' } };
   }
 
-  if (!environment.MEDPLUM_BASE_URL || !environment.MEDPLUM_PROJECT_ID) {
+  if (
+    !environment.MEDPLUM_BASE_URL ||
+    !environment.MEDPLUM_PROJECT_ID ||
+    !environment.DEMO_MEDPLUM_CLIENT_ID ||
+    !environment.DEMO_WORKER_CLIENT_ID ||
+    !environment.DEMO_WORKER_CLIENT_SECRET
+  ) {
     return executionFailed();
   }
 
@@ -153,7 +181,11 @@ export async function handleExecuteRequest(
     return { status: 401, body: { error: 'Authentication required' } };
   }
 
-  if (session.projectId !== environment.MEDPLUM_PROJECT_ID) {
+  if (
+    session.projectId !== environment.MEDPLUM_PROJECT_ID ||
+    session.profile.resourceType !== 'ClientApplication' ||
+    session.profile.id !== environment.DEMO_MEDPLUM_CLIENT_ID
+  ) {
     return { status: 403, body: { error: 'Project access denied' } };
   }
 
@@ -162,8 +194,9 @@ export async function handleExecuteRequest(
   }
 
   try {
+    const worker = await dependencies.loginWorker(environment);
     const body = await dispatchAction(
-      session.medplum,
+      worker.medplum,
       envelope.action,
       envelope.input,
       environment.GEMINI_API_KEY ?? '',
@@ -183,6 +216,9 @@ export default async function execute(request: IncomingMessage & { body?: unknow
     {
       MEDPLUM_BASE_URL: process.env.MEDPLUM_BASE_URL,
       MEDPLUM_PROJECT_ID: process.env.MEDPLUM_PROJECT_ID,
+      DEMO_MEDPLUM_CLIENT_ID: process.env.DEMO_MEDPLUM_CLIENT_ID,
+      DEMO_WORKER_CLIENT_ID: process.env.DEMO_WORKER_CLIENT_ID,
+      DEMO_WORKER_CLIENT_SECRET: process.env.DEMO_WORKER_CLIENT_SECRET,
       GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     },
     productionDependencies

@@ -30,12 +30,13 @@ test('example-data upload remains inaccessible from the UI', async () => {
   expect(uploadDataSource).not.toContain('example-data');
 });
 
-test('legacy Bot upload remains unreachable from the Vercel POC UI', async () => {
+test('all legacy uploads remain unreachable from the public Vercel POC UI', async () => {
   const [appSource, uploadDataSource] = await Promise.all([readSource('../App.tsx'), readSource('../pages/UploadDataPage.tsx')]);
 
   expect(appSource).not.toContain("href: '/upload/bots'");
   expect(appSource).not.toContain('path="/upload/:dataType"');
-  expect(appSource).toContain('path="/upload/core" element={<UploadDataPage uploadType="core" />}');
+  expect(appSource).not.toContain("import { UploadDataPage }");
+  expect(appSource).toContain('path="/upload/core" element={<Navigate to={operatorHomePath} replace />}');
   expect(uploadDataSource).toContain("case 'bots'");
   expect(uploadDataSource).toContain('uploadExampleBots');
 });

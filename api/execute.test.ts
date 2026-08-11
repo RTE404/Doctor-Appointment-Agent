@@ -1,7 +1,7 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   ALLOWED_ACTIONS,
   dispatchAction,
@@ -18,11 +18,15 @@ import type {
 const environment: ExecuteEnvironment = {
   MEDPLUM_BASE_URL: 'https://api.example.test',
   MEDPLUM_PROJECT_ID: 'target-project',
+  DEMO_MEDPLUM_CLIENT_ID: 'browser-client',
+  DEMO_WORKER_CLIENT_ID: 'worker-client',
+  DEMO_WORKER_CLIENT_SECRET: 'worker-secret',
   GEMINI_API_KEY: 'gemini-key',
 };
 
-const profile = { resourceType: 'Practitioner' as const, id: 'synthetic-user' };
+const profile = { resourceType: 'ClientApplication' as const, id: 'browser-client' };
 const medplum = { getProfileAsync: async () => profile } as unknown as MedplumClient;
+const workerMedplum = { getProfileAsync: async () => ({ resourceType: 'ClientApplication' as const, id: 'worker-client' }) } as unknown as MedplumClient;
 
 test('compiles the serverless runtime graph with Node ESM import semantics', () => {
   const entrypoint = fileURLToPath(new URL('./execute.ts', import.meta.url));
@@ -79,6 +83,7 @@ function createDependencies(handlers: Record<ActionName, RuntimeActionHandler>):
   return {
     handlers,
     authenticate: async () => ({ medplum, profile, projectId: 'target-project' }),
+    loginWorker: async () => ({ medplum: workerMedplum }),
   };
 }
 
@@ -101,7 +106,14 @@ describe('dispatchAction', () => {
     });
   });
 
-  test.each(['block-availability', 'reschedule-appointment', 'agent-find-doctors', 'agent-ensure-doctor', 'agent-book-appointment'] as const)(
+  test.each([
+    'cancel-appointment',
+    'complete-appointment',
+    'reschedule-appointment',
+    'agent-find-doctors',
+    'agent-ensure-doctor',
+    'agent-book-appointment',
+  ] as const)(
     'does not pass secrets to %s',
     async (action) => {
       const { handlers, seen } = createHandlers();
@@ -158,6 +170,19 @@ describe('handleExecuteRequest', () => {
     expect(response.body).toEqual({ error: 'Project access denied' });
   });
 
+  test('returns 403 when the token is not the configured read-only browser client', async () => {
+    const dependencies = createDependencies(createHandlers().handlers);
+    dependencies.authenticate = async () => ({
+      medplum,
+      profile: { resourceType: 'Practitioner', id: 'personal-user' },
+      projectId: 'target-project',
+    });
+
+    const response = await handleExecuteRequest(request({ action: 'agent-intake', input: {} }, 'Bearer personal-token'), environment, dependencies);
+
+    expect(response).toEqual({ status: 403, body: { error: 'Project access denied' } });
+  });
+
   test('executes an allowlisted action for a valid target-project session', async () => {
     const handlers = createHandlers();
     handlers.handlers['agent-intake'] = async () => ({ ok: true });
@@ -170,14 +195,35 @@ describe('handleExecuteRequest', () => {
     expect(response).toEqual({ status: 200, body: { ok: true } });
   });
 
+  test('executes allowlisted actions with the server-only worker client', async () => {
+    const handlers = createHandlers();
+    const workerLogin = vi.fn(async () => ({ medplum: workerMedplum }));
+    const dependencies = { ...createDependencies(handlers.handlers), loginWorker: workerLogin };
+    let receivedClient: MedplumClient | undefined;
+    handlers.handlers['agent-find-doctors'] = async (client) => {
+      receivedClient = client;
+      return { ok: true };
+    };
+
+    const response = await handleExecuteRequest(
+      request({ action: 'agent-find-doctors', input: {} }, 'Bearer browser-token'),
+      environment,
+      dependencies
+    );
+
+    expect(response.status).toBe(200);
+    expect(workerLogin).toHaveBeenCalledWith(environment);
+    expect(receivedClient).toBe(workerMedplum);
+  });
+
   test('accepts application/json with a charset parameter', async () => {
     const response = await handleExecuteRequest(
-      request({ action: 'block-availability', input: {} }, 'Bearer valid-token', 'application/json; charset=utf-8'),
+      request({ action: 'cancel-appointment', input: {} }, 'Bearer valid-token', 'application/json; charset=utf-8'),
       environment,
       createDependencies(createHandlers().handlers)
     );
 
-    expect(response).toEqual({ status: 200, body: { action: 'block-availability' } });
+    expect(response).toEqual({ status: 200, body: { action: 'cancel-appointment' } });
   });
 
   test.each([
@@ -187,7 +233,7 @@ describe('handleExecuteRequest', () => {
     ['malformed JSON', request('{', 'Bearer valid-token')],
     ['non-object body', request(['not', 'an', 'object'], 'Bearer valid-token')],
     ['non-object input', request({ action: 'agent-intake', input: [] }, 'Bearer valid-token')],
-    ['unknown action', request({ action: 'not-allowlisted', input: {} }, 'Bearer valid-token')],
+    ['removed schedule mutation action', request({ action: 'block-availability', input: {} }, 'Bearer valid-token')],
   ])('returns 400 for %s', async (_name, invalidRequest) => {
     const response = await handleExecuteRequest(invalidRequest, environment, createDependencies(createHandlers().handlers));
 
@@ -196,8 +242,18 @@ describe('handleExecuteRequest', () => {
 
   test('returns a sanitized 500 response when server configuration is missing', async () => {
     const response = await handleExecuteRequest(
-      request({ action: 'block-availability', input: {} }, 'Bearer valid-token'),
+      request({ action: 'cancel-appointment', input: {} }, 'Bearer valid-token'),
       { ...environment, MEDPLUM_BASE_URL: undefined },
+      createDependencies(createHandlers().handlers)
+    );
+
+    expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
+  });
+
+  test('returns a sanitized 500 response when worker configuration is missing', async () => {
+    const response = await handleExecuteRequest(
+      request({ action: 'agent-find-doctors', input: {} }, 'Bearer valid-token'),
+      { ...environment, DEMO_WORKER_CLIENT_SECRET: undefined },
       createDependencies(createHandlers().handlers)
     );
 

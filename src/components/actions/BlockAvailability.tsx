@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Modal } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { createReference, getQuestionnaireAnswers, normalizeErrorString } from '@medplum/core';
-import type { Bundle, Questionnaire, QuestionnaireResponse, Schedule } from '@medplum/fhirtypes';
-import { Loading, QuestionnaireForm, useMedplum } from '@medplum/react';
-import { IconCircleCheck, IconCircleOff } from '@tabler/icons-react';
+import { createReference, normalizeErrorString } from '@medplum/core';
+import type { Questionnaire, QuestionnaireResponse } from '@medplum/fhirtypes';
+import { Loading, QuestionnaireForm } from '@medplum/react';
+import { IconCircleOff } from '@tabler/icons-react';
 import { useContext } from 'react';
 import type { JSX } from 'react';
-import type { BlockAvailabilityEvent } from '../../bots/core/block-availability';
-import { executeAction } from '../../api/executeAction';
 import { ScheduleContext } from '../../Schedule.context';
 
 interface BlockAvailabilityProps {
@@ -24,30 +22,15 @@ interface BlockAvailabilityProps {
 export function BlockAvailability(props: BlockAvailabilityProps): JSX.Element {
   const { opened, handlers } = props;
 
-  const medplum = useMedplum();
-
   const { schedule } = useContext(ScheduleContext);
 
   if (!schedule) {
     return <Loading />;
   }
 
-  async function handleQuestionnaireSubmit(formData: QuestionnaireResponse): Promise<void> {
-    const answers = getQuestionnaireAnswers(formData);
-
+  async function handleQuestionnaireSubmit(_formData: QuestionnaireResponse): Promise<void> {
     try {
-      const input: BlockAvailabilityEvent = {
-        schedule: createReference(schedule as Schedule),
-        start: answers['start-date'].valueDateTime as string,
-        end: answers['end-date'].valueDateTime as string,
-      };
-      await executeAction<BlockAvailabilityEvent, Bundle>(medplum, 'block-availability', input);
-
-      showNotification({
-        icon: <IconCircleCheck />,
-        title: 'Success',
-        message: 'Slots created',
-      });
+      throw new Error('Schedule editing is unavailable in the shared demo');
     } catch (err) {
       showNotification({
         color: 'red',

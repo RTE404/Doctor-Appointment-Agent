@@ -5,6 +5,7 @@ import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
 import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import { handler } from './reschedule-appointment';
+import { DEMO_GENERATED_TAG } from '../../demo/demoTag';
 
 // The handler searches Communication.subject/category — not indexed by a
 // bare MockClient. See patientContext.test.ts for the same fix and its
@@ -37,6 +38,7 @@ describe('reschedule-appointment handler', () => {
     });
     const appointment = await medplum.createResource({
       resourceType: 'Appointment',
+      meta: { tag: [DEMO_GENERATED_TAG] },
       status: 'booked',
       slot: [{ reference: `Slot/${oldSlot.id}` }],
       serviceType: SERVICE_TYPE,
@@ -88,6 +90,10 @@ describe('reschedule-appointment handler', () => {
     // write), not merely echoed by the mocked $book response fixture.
     expect(proposedAppointment.description).toBe('Chest discomfort during exercise');
     expect(proposedAppointment.comment).toBe('My chest hurts when I run');
+    expect(proposedAppointment.meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
     expect(posted.some((p) => p.url === medplum.fhirUrl('Appointment', appointment.id as string, '$cancel').toString())).toBe(true);
 
     const updatedCommunication = await medplum.readResource('Communication', communication.id as string);
@@ -100,6 +106,7 @@ describe('reschedule-appointment handler', () => {
     const oldSlot = await medplum.createResource({ resourceType: 'Slot', schedule: { reference: `Schedule/${schedule.id}` }, status: 'busy', start: '2026-09-01T09:00:00Z', end: '2026-09-01T09:30:00Z' });
     const appointment = await medplum.createResource({
       resourceType: 'Appointment',
+      meta: { tag: [DEMO_GENERATED_TAG] },
       status: 'booked',
       slot: [{ reference: `Slot/${oldSlot.id}` }],
       serviceType: SERVICE_TYPE,
@@ -122,5 +129,54 @@ describe('reschedule-appointment handler', () => {
     const original = await medplum.readResource('Appointment', appointment.id as string);
     expect(original.status).toBe('booked'); // untouched
     expect(posted).not.toContain(medplum.fhirUrl('Appointment', appointment.id as string, '$cancel').toString());
+  });
+
+  test('rejects an untagged appointment before attempting any mutation', async () => {
+    const medplum = new MockClient();
+    const appointment = await medplum.createResource({
+      resourceType: 'Appointment',
+      status: 'booked',
+      participant: PARTICIPANTS,
+    });
+    const post = vi.spyOn(medplum, 'post');
+
+    await expect(
+      handler(medplum, {
+        bot: { reference: 'Bot/123' },
+        input: {
+          appointmentId: appointment.id as string,
+          newStart: '2026-09-02T09:00:00Z',
+          newEnd: '2026-09-02T09:30:00Z',
+        },
+        contentType: 'application/json',
+        secrets: {},
+      })
+    ).rejects.toThrow('Only demo-generated appointments can be rescheduled');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('rejects a tagged appointment whose status cannot be rescheduled before attempting any mutation', async () => {
+    const medplum = new MockClient();
+    const appointment = await medplum.createResource({
+      resourceType: 'Appointment',
+      meta: { tag: [DEMO_GENERATED_TAG] },
+      status: 'fulfilled',
+      participant: PARTICIPANTS,
+    });
+    const post = vi.spyOn(medplum, 'post');
+
+    await expect(
+      handler(medplum, {
+        bot: { reference: 'Bot/123' },
+        input: {
+          appointmentId: appointment.id as string,
+          newStart: '2026-09-02T09:00:00Z',
+          newEnd: '2026-09-02T09:30:00Z',
+        },
+        contentType: 'application/json',
+        secrets: {},
+      })
+    ).rejects.toThrow('Only pending or booked appointments can be rescheduled');
+    expect(post).not.toHaveBeenCalled();
   });
 });

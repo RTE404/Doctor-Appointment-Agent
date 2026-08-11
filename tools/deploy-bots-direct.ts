@@ -8,10 +8,12 @@ import { getOrCreateDeploymentBot } from './deploy-bot-provisioning';
 
 async function main(): Promise<void> {
   const baseUrl = process.env.MEDPLUM_BASE_URL;
-  const clientId = process.env.MEDPLUM_CLIENT_ID;
-  const clientSecret = process.env.MEDPLUM_CLIENT_SECRET;
+  const clientId = process.env.SEED_MEDPLUM_CLIENT_ID;
+  const clientSecret = process.env.SEED_MEDPLUM_CLIENT_SECRET;
   if (!baseUrl || !clientId || !clientSecret) {
-    throw new Error('MEDPLUM_BASE_URL, MEDPLUM_CLIENT_ID, and MEDPLUM_CLIENT_SECRET must all be set (see .env)');
+    throw new Error(
+      'MEDPLUM_BASE_URL, SEED_MEDPLUM_CLIENT_ID, and SEED_MEDPLUM_CLIENT_SECRET must all be set (see .env)'
+    );
   }
 
   const medplum = new MedplumClient({ baseUrl });
