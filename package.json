@@ -12,6 +12,10 @@
     "lint:fix": "eslint src/ --fix",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:corpus": "tsx tools/seed/verify-specialty-corpus.ts",
+    "verify:api-esm": "tsc --project tsconfig.api.json",
+    "verify": "npm test && npm run verify:api-esm && npm run build",
+    "verify:all": "npm run verify && npm run test:corpus",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch"
   },

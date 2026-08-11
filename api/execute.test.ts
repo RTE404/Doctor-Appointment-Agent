@@ -1,6 +1,4 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
-import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
 import { describe, expect, test, vi } from 'vitest';
 import {
   ALLOWED_ACTIONS,
@@ -27,28 +25,6 @@ const environment: ExecuteEnvironment = {
 const profile = { resourceType: 'ClientApplication' as const, id: 'browser-client' };
 const medplum = { getProfileAsync: async () => profile } as unknown as MedplumClient;
 const workerMedplum = { getProfileAsync: async () => ({ resourceType: 'ClientApplication' as const, id: 'worker-client' }) } as unknown as MedplumClient;
-
-test('compiles the serverless runtime graph with Node ESM import semantics', () => {
-  const entrypoint = fileURLToPath(new URL('./execute.ts', import.meta.url));
-  const program = ts.createProgram([entrypoint], {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    strict: true,
-    noEmit: true,
-    skipLibCheck: true,
-  });
-  const diagnostics = ts.getPreEmitDiagnostics(program).map((diagnostic) => {
-    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
-    if (!diagnostic.file || diagnostic.start === undefined) {
-      return message;
-    }
-    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
-    return `${diagnostic.file.fileName}:${position.line + 1}:${position.character + 1} ${message}`;
-  });
-
-  expect(diagnostics).toEqual([]);
-}, 15_000);
 
 function request(body: unknown, authorization?: string, contentType = 'application/json'): ExecuteRequest {
   return {
@@ -275,16 +251,46 @@ describe('handleExecuteRequest', () => {
     handlers['agent-intake'] = async () => {
       throw new Error('handler-input-marker gemini-key valid-token');
     };
-    const response = await handleExecuteRequest(
-      request({ action: 'agent-intake', input: { marker: 'handler-input-marker' } }, 'Bearer valid-token'),
-      environment,
-      createDependencies(handlers)
-    );
-    const serialized = JSON.stringify(response);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
-    expect(serialized).not.toContain('valid-token');
-    expect(serialized).not.toContain('gemini-key');
-    expect(serialized).not.toContain('handler-input-marker');
+    try {
+      const response = await handleExecuteRequest(
+        request({ action: 'agent-intake', input: { marker: 'handler-input-marker' } }, 'Bearer valid-token'),
+        environment,
+        createDependencies(handlers)
+      );
+      const serialized = JSON.stringify({ response, logs: errorSpy.mock.calls });
+
+      expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
+      expect(errorSpy).toHaveBeenCalledWith('Action execution failed', 'unclassified');
+      expect(serialized).not.toContain('valid-token');
+      expect(serialized).not.toContain('gemini-key');
+      expect(serialized).not.toContain('handler-input-marker');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test('logs only a safe diagnostic code for a Gemini HTTP failure', async () => {
+    const { handlers } = createHandlers();
+    handlers['agent-intake'] = async () => {
+      throw new Error('Gemini request failed: 403');
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const response = await handleExecuteRequest(
+        request({ action: 'agent-intake', input: { marker: 'sensitive-input-marker' } }, 'Bearer sensitive-token-marker'),
+        environment,
+        createDependencies(handlers)
+      );
+
+      expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
+      expect(errorSpy).toHaveBeenCalledWith('Action execution failed', 'gemini-http-403');
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sensitive-input-marker');
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sensitive-token-marker');
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
