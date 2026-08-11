@@ -12,6 +12,7 @@
     "lint:fix": "eslint src/ --fix",
     "preview": "vite preview",
     "test": "vitest run",
+    "verify:api-esm": "tsc --project tsconfig.api.json",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch"
   },
