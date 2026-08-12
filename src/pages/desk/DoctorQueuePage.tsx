@@ -7,7 +7,7 @@ import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { QueueTable } from '../../components/desk/QueueTable';
-import { isValidNpi } from './doctorLookup';
+import { isValidNpi, normalizeNpi } from './doctorLookup';
 import { loadDoctorQueueEntries } from './doctorQueue';
 import type { QueueEntry } from './doctorQueue';
 
@@ -17,32 +17,41 @@ export function DoctorQueuePage(): JSX.Element {
   const navigate = useNavigate();
   const [entries, setEntries] = useState<QueueEntry[]>();
   const [error, setError] = useState<string>();
-  const routeError = !npi || !isValidNpi(npi) ? 'A valid 10-digit NPI is required to load the doctor queue.' : undefined;
+  const providerIdentifier = npi ? normalizeNpi(npi) : undefined;
+  const routeError =
+    !providerIdentifier || !isValidNpi(providerIdentifier)
+      ? 'A valid numeric provider identifier with 1 to 10 digits is required to load the doctor queue.'
+      : undefined;
 
   useEffect(() => {
-    if (!npi || !isValidNpi(npi)) {
+    if (!providerIdentifier || !isValidNpi(providerIdentifier)) {
       return;
     }
-    const doctorNpi = npi;
+    const doctorIdentifier = providerIdentifier;
 
     async function load(): Promise<void> {
-      setEntries(await loadDoctorQueueEntries(medplum, doctorNpi));
+      setEntries(await loadDoctorQueueEntries(medplum, doctorIdentifier));
     }
 
     load().catch((err) => setError(normalizeErrorString(err)));
-  }, [medplum, npi]);
+  }, [medplum, providerIdentifier]);
 
   function openPatient(patientId: string): void {
-    Promise.resolve(navigate(`/desk/${npi}/patients/${patientId}`)).catch(console.error);
+    if (!providerIdentifier) {
+      return;
+    }
+    Promise.resolve(navigate(`/desk/${providerIdentifier}/patients/${patientId}`)).catch(console.error);
   }
 
   return (
     <Document width={800}>
       <Stack>
-        <Title order={1}>Patient Queue — NPI {npi}</Title>
+        <Title order={1}>Patient Queue — Provider {providerIdentifier ?? npi}</Title>
         {(routeError || error) && <Alert color="red">{routeError ?? error}</Alert>}
         {!entries && !routeError && !error && <Loader />}
-        {entries?.length === 0 && <Alert color="yellow">No patients have booked with this NPI yet.</Alert>}
+        {entries?.length === 0 && (
+          <Alert color="yellow">No patients have booked with this provider identifier yet.</Alert>
+        )}
         {entries && <QueueTable entries={entries} onOpen={openPatient} />}
       </Stack>
     </Document>

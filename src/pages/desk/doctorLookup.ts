@@ -6,5 +6,5 @@ export function normalizeNpi(value: string): string {
 }
 
 export function isValidNpi(value: string): boolean {
-  return /^\d{10}$/.test(normalizeNpi(value));
+  return /^\d{1,10}$/.test(normalizeNpi(value));
 }

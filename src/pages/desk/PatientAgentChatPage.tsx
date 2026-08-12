@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router';
 import { AgentChat } from '../../components/desk/AgentChat';
 import type { ChatTurn } from '../../components/desk/chatModel';
-import { isValidNpi } from './doctorLookup';
+import { isValidNpi, normalizeNpi } from './doctorLookup';
 import { executeAction } from '../../api/executeAction';
 import type { ChatInput, ChatResult } from '../../bots/agent/agent-patient-chat';
 
@@ -18,20 +18,21 @@ export function PatientAgentChatPage(): JSX.Element {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [threadId, setThreadId] = useState<string>();
   const [error, setError] = useState<string>();
+  const providerIdentifier = npi ? normalizeNpi(npi) : undefined;
   const routeError =
-    !npi || !isValidNpi(npi) || !patientId
-      ? 'A valid doctor NPI and patient id are required to use the patient agent.'
+    !providerIdentifier || !isValidNpi(providerIdentifier) || !patientId
+      ? 'A valid provider identifier and patient id are required to use the patient agent.'
       : undefined;
 
   async function handleAsk(question: string): Promise<void> {
-    if (!npi || !isValidNpi(npi) || !patientId) {
-      setError('A valid doctor NPI and patient id are required to use the patient agent.');
+    if (!providerIdentifier || !isValidNpi(providerIdentifier) || !patientId) {
+      setError('A valid provider identifier and patient id are required to use the patient agent.');
       return;
     }
 
     setError(undefined);
     try {
-      const input: ChatInput = { npi, patientId, question, threadId };
+      const input: ChatInput = { npi: providerIdentifier, patientId, question, threadId };
       const result = await executeAction<ChatInput, ChatResult>(medplum, 'agent-patient-chat', input);
       setThreadId(result.threadId);
       setTurns((previous) => [...previous, { question, answer: result.answer }]);

@@ -177,16 +177,16 @@ describe('doctor queue resource join', () => {
     expect(buildQueueEntries(appointments, [], [])).toStrictEqual([]);
   });
 
-  test('loads an appointment attached to any Practitioner sharing the NPI', async () => {
+  test('loads a synthetic-provider appointment and summary by its exact short identifier', async () => {
     const firstPractitioner: Practitioner = {
       resourceType: 'Practitioner',
       id: 'practitioner-1',
-      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '12345' }],
     };
     const relationshipPractitioner: Practitioner = {
       resourceType: 'Practitioner',
       id: 'practitioner-2',
-      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }],
+      identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '12345' }],
     };
     const patient: Patient = {
       resourceType: 'Patient',
@@ -221,7 +221,7 @@ describe('doctor queue resource join', () => {
       summary,
     ]);
 
-    const entries = await loadDoctorQueueEntries(medplum, '1234567890');
+    const entries = await loadDoctorQueueEntries(medplum, '12345');
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({

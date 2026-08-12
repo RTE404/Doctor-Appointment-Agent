@@ -24,15 +24,15 @@ export function DoctorLookupPage(): JSX.Element {
       <Stack>
         <Title order={1}>Doctor Desk</Title>
         <Text size="sm" c="dimmed">
-          Enter a doctor's 10-digit NPI to view appointments booked with that practitioner. The NPI is a demo filter;
-          it is not identity verification or an access-control check.
+          Enter the provider identifier shown on the booking confirmation to view appointments booked with that
+          practitioner. The identifier is a demo filter; it is not identity verification or an access-control check.
         </Text>
         <TextInput
-          label="NPI"
+          label="Provider identifier"
           value={npi}
           onChange={(event) => setNpi(event.currentTarget.value)}
-          placeholder="e.g. 1234567890"
-          error={showValidationError ? 'Enter a 10-digit NPI.' : undefined}
+          placeholder="e.g. 12345 or 1234567890"
+          error={showValidationError ? 'Enter a numeric provider identifier with 1 to 10 digits.' : undefined}
         />
         <Group justify="flex-end">
           <Button disabled={!isValidNpi(npi)} onClick={handleSubmit}>

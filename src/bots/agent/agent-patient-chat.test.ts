@@ -82,11 +82,11 @@ describe('agent-patient-chat handler', () => {
     expect(body).not.toHaveProperty('response_format');
   });
 
-  test('persists question and answer as threaded Communications, sender is the real practitioner, starts a new thread', async () => {
+  test('allows a synthetic provider identifier after verifying the booking relationship', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
     stubPatientEverything(medplum, patient);
-    const practitioner = await medplum.createResource({ resourceType: 'Practitioner', identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }] });
+    const practitioner = await medplum.createResource({ resourceType: 'Practitioner', identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '12345' }] });
     await medplum.createResource({
       resourceType: 'Appointment',
       status: 'booked',
@@ -103,7 +103,7 @@ describe('agent-patient-chat handler', () => {
 
     const result = await handler(medplum, {
       bot: { reference: 'Bot/123' },
-      input: { npi: '1234567890', patientId: patient.id as string, question: 'Any known allergies?' },
+      input: { npi: '12345', patientId: patient.id as string, question: 'Any known allergies?' },
       contentType: 'application/json',
       secrets: { GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: 'test-key' } },
     });
@@ -130,16 +130,16 @@ describe('agent-patient-chat handler', () => {
     });
   });
 
-  test('throws when no booking relationship exists between this NPI and this patient', async () => {
+  test('rejects a synthetic provider identifier when no booking relationship exists', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
-    await medplum.createResource({ resourceType: 'Practitioner', identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '1234567890' }] });
+    await medplum.createResource({ resourceType: 'Practitioner', identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: '12345' }] });
     // No Appointment created — no relationship exists.
 
     await expect(
       handler(medplum, {
         bot: { reference: 'Bot/123' },
-        input: { npi: '1234567890', patientId: patient.id as string, question: 'Any known allergies?' },
+        input: { npi: '12345', patientId: patient.id as string, question: 'Any known allergies?' },
         contentType: 'application/json',
         secrets: { GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: 'test-key' } },
       })

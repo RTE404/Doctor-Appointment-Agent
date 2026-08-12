@@ -8,9 +8,14 @@ describe('doctor NPI entry', () => {
     expect(normalizeNpi(' 12345-67890 ')).toBe('1234567890');
   });
 
-  test('accepts exactly ten digits', () => {
-    expect(isValidNpi('1234567890')).toBe(true);
-    expect(isValidNpi('12345')).toBe(false);
-    expect(isValidNpi('123456789A')).toBe(false);
+  test.each(['7', '12345', '1234567890', ' 12-345 '])('accepts supported provider identifier %j', (value) => {
+    expect(isValidNpi(value)).toBe(true);
   });
+
+  test.each(['', 'abc', '123456789A', '123.45', '123_45', '12345678901'])(
+    'rejects unsupported provider identifier %j',
+    (value) => {
+      expect(isValidNpi(value)).toBe(false);
+    }
+  );
 });
