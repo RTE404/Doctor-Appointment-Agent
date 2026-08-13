@@ -6,51 +6,56 @@ import { Document, PatientSummary, useMedplum } from '@medplum/react';
 import type { JSX } from 'react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import type { FindBookableOptionsInput, FindBookableOptionsResult } from '../../bots/agent/agent-find-bookable-options';
 import type { BookInput, BookResult } from '../../bots/agent/agent-book-appointment';
-import { BookableOptionCard, BookableOptionDetails } from '../../components/agent/BookableOptionCard';
-import { ComplaintForm } from '../../components/agent/ComplaintForm';
+import type { BookingChatInput, BookingChatResult } from '../../bots/agent/agent-booking-chat';
+import type { BookableOption } from '../../bots/agent/lib/bookableOptions';
+import { BookableOptionDetails } from '../../components/agent/BookableOptionCard';
+import { BookingChat } from '../../components/agent/BookingChat';
+import type { BookingChatTurn } from '../../components/agent/bookingChatModel';
 import { EncounterHistoryList } from '../../components/agent/EncounterHistoryList';
 import { executeAction } from '../../api/executeAction';
-import { confirmSelectedOption, searchForBookableOptions } from './bookingAgentController';
-import { initialBookingAgentState, optionSelected } from './bookingAgentModel';
-import type { BookingInProgressState } from './bookingAgentModel';
+import { confirmSelectedOption } from './bookingAgentController';
+import { optionSelected, optionsReceived } from './bookingAgentModel';
+import type { BookingAgentState, BookingInProgressState } from './bookingAgentModel';
 
 export function PatientHistoryPage(): JSX.Element {
   const { patientId } = useParams();
   const medplum = useMedplum();
   const navigate = useNavigate();
-  const [agentState, setAgentState] = useState(initialBookingAgentState);
-  const [submitting, setSubmitting] = useState(false);
+  const [turns, setTurns] = useState<BookingChatTurn[]>([]);
+  const [sessionId, setSessionId] = useState<string>();
+  const [agentState, setAgentState] = useState<BookingAgentState>();
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
 
-  async function handleComplaintSubmit(complaintText: string): Promise<void> {
-    let searchingState = agentState;
-    setSubmitting(true);
+  async function handleSend(message: string): Promise<void> {
+    setSending(true);
     setError(undefined);
+    setTurns((previous) => [...previous, { kind: 'patient', text: message }]);
     try {
-      const nextState = await searchForBookableOptions(agentState, patientId as string, complaintText, {
-        discover: (input) =>
-          executeAction<FindBookableOptionsInput, FindBookableOptionsResult>(
-            medplum,
-            'agent-find-bookable-options',
-            input
-          ),
-        onSearchStarted: (state) => {
-          searchingState = state;
-          setAgentState(state);
-        },
-      });
-      setAgentState(nextState);
+      const input: BookingChatInput = { patientId: patientId as string, message, sessionId };
+      const result = await executeAction<BookingChatInput, BookingChatResult>(medplum, 'agent-booking-chat', input);
+      setSessionId(result.sessionId);
+      if (result.kind === 'question' || result.kind === 'error') {
+        setTurns((previous) => [...previous, { kind: 'agent-question', text: result.reply }]);
+      } else {
+        setTurns((previous) => [...previous, { kind: 'agent-options', options: result.options }]);
+        setAgentState(optionsReceived({ options: result.options, summaryCommunicationId: result.summaryCommunicationId }));
+      }
     } catch (err) {
       setError(normalizeErrorString(err));
-      setAgentState({ ...searchingState, phase: 'collecting' });
     } finally {
-      setSubmitting(false);
+      setSending(false);
     }
   }
 
+  function handleSelectOption(option: BookableOption): void {
+    if (!agentState) return;
+    setAgentState(optionSelected(agentState, option));
+  }
+
   async function handleBookingConfirmation(): Promise<void> {
+    if (!agentState) return;
     let bookingState: BookingInProgressState | undefined;
     try {
       setError(undefined);
@@ -71,8 +76,7 @@ export function PatientHistoryPage(): JSX.Element {
     }
   }
 
-  const selectedOption = agentState.selectedOption;
-  const complaintDisabled = !['collecting', 'clarifying'].includes(agentState.phase);
+  const selectedOption = agentState?.selectedOption;
 
   return (
     <Document width={800}>
@@ -81,32 +85,10 @@ export function PatientHistoryPage(): JSX.Element {
         <PatientSummary patient={{ reference: `Patient/${patientId}` }} />
         <EncounterHistoryList patientId={patientId as string} />
         {error && <Alert color="red">{error}</Alert>}
-        {agentState.phase === 'error' && (
-          <Alert color="red">I couldn't match that request to a supported doctor category.</Alert>
-        )}
-        {agentState.slotTaken && (
+        {agentState?.slotTaken && (
           <Alert color="yellow">That appointment was just taken. Please choose one of the remaining options.</Alert>
         )}
-        {agentState.phase === 'showing-options' && agentState.options.length > 0 && (
-          <Stack>
-            <Text>Here are the best available options:</Text>
-            {agentState.options.map((option, index) => (
-              <BookableOptionCard
-                key={option.id}
-                option={option}
-                number={index + 1}
-                disabled={submitting}
-                onSelect={() => setAgentState(optionSelected(agentState, option))}
-              />
-            ))}
-            <Text>Option 1 best matches your preferences.</Text>
-            <Text>Which option would you like to book?</Text>
-          </Stack>
-        )}
-        {agentState.phase === 'showing-options' && agentState.options.length === 0 && (
-          <Alert color="yellow">No appointments are available in the next seven days.</Alert>
-        )}
-        {(agentState.phase === 'confirming' || agentState.phase === 'booking') && selectedOption && (
+        {(agentState?.phase === 'confirming' || agentState?.phase === 'booking') && selectedOption && (
           <Card withBorder>
             <Stack>
               <BookableOptionDetails option={selectedOption} />
@@ -117,12 +99,9 @@ export function PatientHistoryPage(): JSX.Element {
             </Stack>
           </Card>
         )}
-        <ComplaintForm
-          onSubmit={handleComplaintSubmit}
-          submitting={submitting}
-          needsClarification={agentState.phase === 'clarifying'}
-          disabled={complaintDisabled}
-        />
+        {agentState?.phase !== 'confirming' && agentState?.phase !== 'booking' && (
+          <BookingChat turns={turns} onSend={handleSend} sending={sending} onSelectOption={handleSelectOption} />
+        )}
       </Stack>
     </Document>
   );
