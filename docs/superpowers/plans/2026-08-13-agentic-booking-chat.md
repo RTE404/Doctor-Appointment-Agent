@@ -202,9 +202,9 @@ describe('booking chat prompts', () => {
   test('buildPatientContextMessage summarizes conditions, medications, and allergies', () => {
     const message = buildPatientContextMessage({
       patient: { resourceType: 'Patient' },
-      conditions: [{ resourceType: 'Condition', code: { text: 'Asthma' } }],
-      medications: [{ resourceType: 'MedicationRequest', status: 'active', intent: 'order', medicationCodeableConcept: { text: 'Albuterol' } }],
-      allergies: [{ resourceType: 'AllergyIntolerance', code: { text: 'Penicillin' } }],
+      conditions: [{ resourceType: 'Condition', subject: { reference: 'Patient/test' }, code: { text: 'Asthma' } }],
+      medications: [{ resourceType: 'MedicationRequest', status: 'active', intent: 'order', subject: { reference: 'Patient/test' }, medicationCodeableConcept: { text: 'Albuterol' } }],
+      allergies: [{ resourceType: 'AllergyIntolerance', patient: { reference: 'Patient/test' }, code: { text: 'Penicillin' } }],
       encounters: [],
     });
 
