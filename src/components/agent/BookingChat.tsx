@@ -68,29 +68,27 @@ export function BookingChat({ turns, onSend, sending, onSelectOption }: BookingC
                   onSelect={() => onSelectOption(option)}
                 />
               ))}
-              <Text>Which option would you like to book?</Text>
+              <Text>Which option would you like to book, or tell me if you'd like something different.</Text>
             </Stack>
           );
         })}
         {sending && <Loader size="sm" />}
       </Stack>
-      {!optionsShown && (
-        <Group align="flex-end">
-          <Textarea
-            style={{ flex: 1 }}
-            label="What brings you in today?"
-            placeholder="e.g. My chest hurts when I run"
-            value={message}
-            onChange={(event) => setMessage(event.currentTarget.value)}
-            disabled={sending}
-            minRows={2}
-            maxRows={3}
-          />
-          <Button disabled={!prepareBookingMessage(message) || sending} loading={sending} onClick={send}>
-            Send
-          </Button>
-        </Group>
-      )}
+      <Group align="flex-end">
+        <Textarea
+          style={{ flex: 1 }}
+          label={optionsShown ? "Not quite right? Describe what you'd like instead" : 'What brings you in today?'}
+          placeholder={optionsShown ? 'e.g. Something in the afternoon instead' : 'e.g. My chest hurts when I run'}
+          value={message}
+          onChange={(event) => setMessage(event.currentTarget.value)}
+          disabled={sending}
+          minRows={2}
+          maxRows={3}
+        />
+        <Button disabled={!prepareBookingMessage(message) || sending} loading={sending} onClick={send}>
+          Send
+        </Button>
+      </Group>
     </Stack>
   );
 }
