@@ -23,23 +23,32 @@ This example app demonstrates the following:
 
 ## Patient Appointment Concierge
 
-The patient-facing agent accepts a natural-language complaint and scheduling preferences, finds currently bookable
-appointments in the next seven days, and books one only after explicit confirmation. It does not diagnose, recommend
-treatment, or assess urgency.
+The patient-facing agent is a real chat: the patient describes what they need in plain language, the agent asks
+clarifying questions when it needs to, searches for currently bookable appointments, and proposes options — and books
+one only after explicit confirmation. It does not diagnose, recommend treatment, or assess urgency.
 
 Example request:
 
 > I have had pain in my throat and constant coughing for the past two days. Find me a nearby doctor. I prefer mornings
 > and someone I've seen before.
 
-The agent supports exactly three request-scoped scheduling preferences, in this priority order:
+Behind the chat, Gemini runs a model-directed tool-calling loop: it decides which tools to call and when (search the
+patient's previous doctors, search NPPES for other providers, check real Medplum availability), when it has enough
+information, and when it needs to ask the patient something instead. Deterministic code still controls everything
+safety-critical — specialty validation, grounding every proposed pick against a real availability result the tools
+actually returned, a distinct-provider cap of 8, and the entire booking path.
 
-1. Preferred time of day: morning, afternoon, or evening.
-2. A matching doctor the patient has previously seen.
-3. Proximity to the patient's recorded address.
+If none of the proposed options are a good fit, the patient isn't stuck: the chat input stays open after options are
+shown, so they can reply with what they'd like different ("something in the afternoon instead", "not Dr. Lin, someone
+else") and the agent picks the search back up — reusing what it already found rather than starting over — until it
+proposes a new set of options.
 
-Earlier availability is the deterministic final tie-breaker. Preferences are soft ranking signals and are not saved as
-long-term patient preferences.
+The agent weighs three request-scoped scheduling preferences, in this priority order, when it explains and picks
+options: preferred time of day (morning/afternoon/evening), a doctor the patient has previously seen, and proximity to
+the patient's recorded address, with earlier availability as the final tie-breaker. These aren't just prompt guidance
+— the same priority order is enforced deterministically as a ranking floor whenever the model's own picks don't
+already satisfy the distinct-provider cap. Preferences are soft, request-scoped signals, not saved as long-term
+patient preferences.
 
 Routing follows a narrow scheduling policy:
 
@@ -50,9 +59,9 @@ Routing follows a narrow scheduling policy:
 
 The agent exposes two server-side actions:
 
-- `agent-find-bookable-options` uses Gemini only to interpret the complaint and extract structured routing and
-  preferences. Deterministic code validates the specialty, searches patient history and NPPES, checks Medplum
-  availability, and returns the best slot from each of up to three distinct providers.
+- `agent-booking-chat` interprets each chat message with Gemini and runs the tool-calling loop described above.
+  Deterministic code validates the specialty, searches patient history and NPPES, checks Medplum availability, and
+  grounds and caps whatever the model proposes at up to 8 distinct providers before returning it to the patient.
 - `agent-book-appointment` revalidates the selected provider, schedule, specialty, intake summary, and slot before using
   Medplum's authoritative booking operation. The action is callable only after the patient selects an option and passes
   the explicit confirmation gate. If the slot was taken, it is removed instead of being reported as booked.
@@ -63,9 +72,9 @@ status, appointment ID, and NPI.
 
 ### Verification status
 
-The complete synthetic workflow has been exercised live: complaint intake, three distinct provider results, preference
-ranking, option selection, explicit confirmation, Medplum booking, and final booking details. The current verification
-gates pass with 216 tests, a successful production TypeScript/Vite build, and a clean ESLint run.
+The complete synthetic workflow has been exercised live: multi-turn chat intake, grounded provider/slot search, up to
+8 distinct provider results, conversational refinement, explicit confirmation, Medplum booking, and final booking
+details. Every change runs the full automated test suite, ESLint, and a production TypeScript/Vite build.
 
 ### Code Organization
 
@@ -82,8 +91,9 @@ The `data` directory contains data that can be uploaded for use in the demo. The
   - Clinical Chart
   - Details (including Appointments and Encounters)
   - Actions (with a button to create a new appointment)
-- Patient agent for selecting a patient, entering a natural-language request, comparing ranked slots from distinct
-  providers, confirming one option, and viewing the complete booking confirmation.
+- Patient agent for selecting a patient, describing a request in chat, comparing proposed slots from distinct
+  providers, refining the search conversationally if none of them fit, confirming one option, and viewing the
+  complete booking confirmation.
 - Doctor Desk for filtering booked appointments by a doctor's NPI.
 - Appointment details page to view and manage the appointment lifecycle. Legacy `My Schedule` and `My Appointments`
   routes redirect to the patient agent because a demo visitor is not a practitioner.
@@ -109,7 +119,7 @@ Configure these Vercel environment variables:
 - `DEMO_MEDPLUM_CLIENT_SECRET`: the browser ClientApplication secret, used only by `/api/demo-session`
 - `DEMO_WORKER_CLIENT_ID`: the server-only worker ClientApplication ID
 - `DEMO_WORKER_CLIENT_SECRET`: the server-only worker secret
-- `GEMINI_API_KEY`: used by the intake and patient-chat actions
+- `GEMINI_API_KEY`: used by the booking chat and patient-chat actions
 - `CRON_SECRET`: a random value of at least 16 characters used by Vercel Cron
 
 `DEMO_ACCESS_CODE`, both ClientApplication secrets, `GEMINI_API_KEY`, and `CRON_SECRET` must never be committed or
