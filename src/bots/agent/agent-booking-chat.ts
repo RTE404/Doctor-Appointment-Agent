@@ -132,7 +132,14 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookingCha
 
     for (let i = 0; i < toolCalls.length; i++) {
       const call = toolCalls[i];
-      const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, { error: `Could not parse tool arguments: ${errorMessage}` })] };
+        continue;
+      }
 
       if (call.function.name === 'ask_clarifying_question') {
         session = { ...session, transcript: appendSkippedRemainder(session.transcript, toolCalls, i, call, 'ok') };
@@ -146,14 +153,29 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookingCha
           session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, 'propose_options', { error: resolved.errorForModel })] };
           continue;
         }
+        if (resolved.reason.trim() === '' || resolved.summary.trim() === '') {
+          session = {
+            ...session,
+            transcript: [
+              ...session.transcript,
+              toolResultMessage(call.id, 'propose_options', { error: 'reason and summary must not be empty' }),
+            ],
+          };
+          continue;
+        }
         const summaryCommunicationId = await writeSummaryCommunication(medplum, patientId, resolved);
         session = { ...session, transcript: appendSkippedRemainder(session.transcript, toolCalls, i, call, { ok: true }) };
         await persistBookingSession(medplum, session, 'completed');
         return { kind: 'options', sessionId: session.communication.id as string, options: resolved.options, summaryCommunicationId };
       }
 
-      const output = await executeReadOnlyTool(medplum, patientId, call.function.name, args);
-      session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, output)] };
+      try {
+        const output = await executeReadOnlyTool(medplum, patientId, call.function.name, args);
+        session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, output)] };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, { error: errorMessage })] };
+      }
     }
   }
 
