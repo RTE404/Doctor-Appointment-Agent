@@ -1015,7 +1015,10 @@ describe('resolveProposedOptions', () => {
   test('falls back to rankBookableOptions when picks exceed the distinct-provider cap', () => {
     const manyGrounded = Array.from({ length: 10 }, (_, i) => option(String(i + 1), `2026-08-14T${13 + i}:00:00.000Z`));
     const bigTranscript: BookingChatMessage[] = [toolResultMessage('check_availability', manyGrounded)];
-    const duplicatePicks = manyGrounded.map((o) => ({ npi: '1', start: o.start, end: o.end, reasoning: 'dup' }));
+    // Each pick must use its own option's real npi to actually key-match the grounded pool
+    // (npi|start|end) — a constant npi paired with another option's start/end would silently
+    // fail to ground, leaving too few grounded picks to ever exercise the fallback branch.
+    const duplicatePicks = manyGrounded.map((o) => ({ npi: o.npi, start: o.start, end: o.end, reasoning: 'dup' }));
 
     const result = resolveProposedOptions(bigTranscript, {
       specialty: 'General Practice',
@@ -1025,7 +1028,9 @@ describe('resolveProposedOptions', () => {
     });
 
     if (!result.ok) throw new Error('expected ok');
-    expect(result.options.length).toBeLessThanOrEqual(MAX_BOOKABLE_OPTIONS);
+    // 10 distinct grounded providers, cap 8 — must be exactly 8, not merely <= 8, so a broken
+    // fallback returning [] (or any under-count) cannot pass vacuously.
+    expect(result.options.length).toBe(MAX_BOOKABLE_OPTIONS);
     expect(new Set(result.options.map((o) => o.npi)).size).toBe(result.options.length);
   });
 });
@@ -1105,7 +1110,7 @@ export function resolveProposedOptions(transcript: BookingChatMessage[], args: P
     .filter((option): option is BookableOption => Boolean(option));
 
   if (groundedPicks.length === 0) {
-    return { ok: false, errorForModel: 'None of the proposed picks are grounded in a prior check_availability result. Call check_availability again before proposing.' };
+    return { ok: false, errorForModel: 'The proposed picks are not grounded in any prior check_availability result. Call check_availability again before proposing.' };
   }
 
   const distinctPicks = distinctByProvider(groundedPicks, MAX_BOOKABLE_OPTIONS);
