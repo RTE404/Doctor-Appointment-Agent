@@ -32,6 +32,10 @@ test('allows the patient concierge discovery action', () => {
   expect(ALLOWED_ACTIONS).toContain('agent-find-bookable-options');
 });
 
+test('allows the booking chat action', () => {
+  expect(ALLOWED_ACTIONS).toContain('agent-booking-chat');
+});
+
 test('compiles the serverless runtime graph with Node ESM import semantics', () => {
   const entrypoint = fileURLToPath(new URL('./execute.ts', import.meta.url));
   const program = ts.createProgram([entrypoint], {

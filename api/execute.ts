@@ -21,6 +21,8 @@ import { handler as agentIntakeHandler } from '../src/bots/agent/agent-intake.js
 import type { IntakeInput } from '../src/bots/agent/agent-intake.js';
 import { handler as agentPatientChatHandler } from '../src/bots/agent/agent-patient-chat.js';
 import type { ChatInput } from '../src/bots/agent/agent-patient-chat.js';
+import { handler as agentBookingChatHandler } from '../src/bots/agent/agent-booking-chat.js';
+import type { BookingChatInput } from '../src/bots/agent/agent-booking-chat.js';
 
 export const ALLOWED_ACTIONS = [
   'cancel-appointment',
@@ -32,6 +34,7 @@ export const ALLOWED_ACTIONS = [
   'agent-ensure-doctor',
   'agent-book-appointment',
   'agent-patient-chat',
+  'agent-booking-chat',
 ] as const;
 
 export type ActionName = (typeof ALLOWED_ACTIONS)[number];
@@ -77,7 +80,7 @@ export interface ExecuteDependencies {
   handlers?: Record<ActionName, RuntimeActionHandler>;
 }
 
-const GEMINI_ACTIONS = new Set<ActionName>(['agent-intake', 'agent-find-bookable-options', 'agent-patient-chat']);
+const GEMINI_ACTIONS = new Set<ActionName>(['agent-intake', 'agent-find-bookable-options', 'agent-patient-chat', 'agent-booking-chat']);
 
 const HANDLERS: Record<ActionName, RuntimeActionHandler> = {
   'cancel-appointment': (medplum, event) =>
@@ -92,6 +95,7 @@ const HANDLERS: Record<ActionName, RuntimeActionHandler> = {
   'agent-ensure-doctor': (medplum, event) => agentEnsureDoctorHandler(medplum, event as BotEvent<EnsureDoctorInput>),
   'agent-book-appointment': (medplum, event) => agentBookAppointmentHandler(medplum, event as BotEvent<BookInput>),
   'agent-patient-chat': (medplum, event) => agentPatientChatHandler(medplum, event as BotEvent<ChatInput>),
+  'agent-booking-chat': (medplum, event) => agentBookingChatHandler(medplum, event as BotEvent<BookingChatInput>),
 };
 
 async function authenticate(accessToken: string, environment: ExecuteEnvironment): Promise<AuthenticatedSession> {

@@ -41,6 +41,10 @@ const Bots: BotDescription[] = [
     src: 'src/bots/agent/agent-patient-chat.ts',
     dist: 'dist/bots/agent/agent-patient-chat.js',
   },
+  {
+    src: 'src/bots/agent/agent-booking-chat.ts',
+    dist: 'dist/bots/agent/agent-booking-chat.js',
+  },
 ];
 
 async function main(): Promise<void> {
