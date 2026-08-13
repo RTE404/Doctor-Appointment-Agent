@@ -65,14 +65,14 @@ describe('bookingAgentModel', () => {
       expect(resolveNextSessionId(result)).toBe('session-1');
     });
 
-    test('an options result clears the session id, since the session is already completed server-side', () => {
+    test('an options result keeps the session id, so a follow-up message can refine the same search', () => {
       const result: BookingChatResult = {
         kind: 'options',
         sessionId: 'session-1',
         options: [option('one')],
         summaryCommunicationId: 'summary-1',
       };
-      expect(resolveNextSessionId(result)).toBeUndefined();
+      expect(resolveNextSessionId(result)).toBe('session-1');
     });
 
     test('an error result clears the session id, since the session is already stopped server-side', () => {

@@ -44,13 +44,14 @@ export function bookingStarted(state: BookingAgentState): BookingInProgressState
   };
 }
 
-// Per the spec's "Session lifecycle" section, only a `kind: 'question'`
-// result leaves the session `status: 'in-progress'` (resumable); `'options'`
-// completes it and `'error'` stops it, so both are rejected server-side if
-// resent. Storing the id in those two cases would hand the caller a dead
-// sessionId with no way to recover it — this keeps only the resumable one.
+// Per the spec's "Session lifecycle" section, `kind: 'question'` and
+// `kind: 'options'` both leave the session `status: 'in-progress'`
+// (resumable) — a patient can keep chatting after seeing options to refine
+// their preferences. Only `'error'` stops the session server-side, so
+// storing the id in that case would hand the caller a dead sessionId with no
+// way to recover it.
 export function resolveNextSessionId(result: BookingChatResult): string | undefined {
-  return result.kind === 'question' ? result.sessionId : undefined;
+  return result.kind === 'question' || result.kind === 'options' ? result.sessionId : undefined;
 }
 
 export function slotTaken(state: BookingAgentState): BookingAgentState {
