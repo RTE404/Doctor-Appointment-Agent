@@ -544,7 +544,7 @@ git commit -m "feat: add persisted booking chat session storage"
 - Test: `src/bots/agent/lib/bookingChatTools.test.ts`
 
 **Interfaces:**
-- Consumes: `findPreviousPhysician` (Task 2), `SPECIALTY_TABLE` from `../../config/specialties.js`, `patientCoords`/`rankCandidates` from `./geo.js`/`./ranking.js`, `searchNppesDoctors` from `./nppes.js`, `ensurePractitionerAndSchedule` from `./ensurePractitionerAndSchedule.js`, `timezoneForState` from `./timezones.js`, `BookableOption` from `./bookableOptions.js`.
+- Consumes: `findPreviousPhysician` (Task 2), `SPECIALTY_TABLE` from `../../../config/specialties.js`, `patientCoords`/`rankCandidates` from `./geo.js`/`./ranking.js`, `searchNppesDoctors` from `./nppes.js`, `ensurePractitionerAndSchedule` from `./ensurePractitionerAndSchedule.js`, `timezoneForState` from `./timezones.js`, `BookableOption` from `./bookableOptions.js`.
 - Produces:
   - `const BOOKING_CHAT_TOOL_SCHEMAS: { type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }[]`
   - `async function searchPreviousPhysicianTool(medplum: MedplumClient, patientId: string, specialtyCode: string): Promise<FoundCandidate | null>`
@@ -708,7 +708,7 @@ Create `src/bots/agent/lib/bookingChatTools.ts`:
 // src/bots/agent/lib/bookingChatTools.ts
 import type { MedplumClient } from '@medplum/core';
 import type { Appointment, Bundle, Patient, Schedule } from '@medplum/fhirtypes';
-import { SPECIALTY_TABLE } from '../../config/specialties.js';
+import { SPECIALTY_TABLE } from '../../../config/specialties.js';
 import { findPreviousPhysician } from '../agent-find-doctors.js';
 import type { FoundCandidate } from '../agent-find-doctors.js';
 import { ensurePractitionerAndSchedule } from './ensurePractitionerAndSchedule.js';
@@ -919,7 +919,7 @@ git commit -m "feat: add booking chat tool schemas and thin tool wrappers"
 - Test: `src/bots/agent/lib/proposeOptions.test.ts`
 
 **Interfaces:**
-- Consumes: `normalizeLlmSpecialty` from `../../config/specialties.js`, `rankBookableOptions`/`BookableOption` from `./bookableOptions.js`, `BookingChatMessage` from `./bookingSession.js`.
+- Consumes: `normalizeLlmSpecialty` from `../../../config/specialties.js`, `rankBookableOptions`/`BookableOption` from `./bookableOptions.js`, `BookingChatMessage` from `./bookingSession.js`.
 - Produces:
   - `const MAX_BOOKABLE_OPTIONS = 8`
   - `interface ProposeOptionsArgs { specialty: string; reason: string; summary: string; picks: { npi: string; start: string; end: string; reasoning: string }[] }`
@@ -1042,7 +1042,7 @@ Create `src/bots/agent/lib/proposeOptions.ts`:
 
 ```ts
 // src/bots/agent/lib/proposeOptions.ts
-import { normalizeLlmSpecialty } from '../../config/specialties.js';
+import { normalizeLlmSpecialty } from '../../../config/specialties.js';
 import { rankBookableOptions } from './bookableOptions.js';
 import type { BookableOption } from './bookableOptions.js';
 import type { BookingChatMessage } from './bookingSession.js';
