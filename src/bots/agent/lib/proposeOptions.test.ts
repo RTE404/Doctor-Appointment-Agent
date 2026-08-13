@@ -93,4 +93,40 @@ describe('resolveProposedOptions', () => {
     expect(result.options.length).toBe(MAX_BOOKABLE_OPTIONS);
     expect(new Set(result.options.map((o) => o.npi)).size).toBe(result.options.length);
   });
+
+  test('falls back to rankBookableOptions when the model under-proposes relative to the grounded pool', () => {
+    // Deduplication drops nothing here — the model simply proposed 2 providers
+    // when 10 distinct grounded providers were available. The design's
+    // deterministic floor must still fill the option list up to the cap.
+    const manyGrounded = Array.from({ length: 10 }, (_, i) => option(String(i + 1), `2026-08-14T${13 + i}:00:00.000Z`));
+    const bigTranscript: BookingChatMessage[] = [toolResultMessage('check_availability', manyGrounded)];
+
+    const result = resolveProposedOptions(bigTranscript, {
+      specialty: 'General Practice',
+      reason: 'r',
+      summary: 's',
+      picks: manyGrounded.slice(0, 2).map((o) => ({ npi: o.npi, start: o.start, end: o.end, reasoning: 'pick' })),
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.options.length).toBe(MAX_BOOKABLE_OPTIONS);
+    expect(new Set(result.options.map((o) => o.npi)).size).toBe(result.options.length);
+  });
+
+  test('keeps the model ordering when the grounded pool cannot fill the cap', () => {
+    // Only 2 distinct providers exist, so proposing 2 is not under-proposing —
+    // the model's ordering and reasoning must survive.
+    const result = resolveProposedOptions(transcript, {
+      specialty: 'General Practice',
+      reason: 'r',
+      summary: 's',
+      picks: [
+        { npi: '2', start: grounded[1].start, end: grounded[1].end, reasoning: 'b' },
+        { npi: '1', start: grounded[0].start, end: grounded[0].end, reasoning: 'a' },
+      ],
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.options.map((o) => o.npi)).toStrictEqual(['2', '1']);
+  });
 });

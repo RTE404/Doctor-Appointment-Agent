@@ -66,10 +66,16 @@ export function resolveProposedOptions(transcript: BookingChatMessage[], args: P
   }
 
   const distinctPicks = distinctByProvider(groundedPicks, MAX_BOOKABLE_OPTIONS);
-  const options =
-    distinctPicks.length === groundedPicks.length
-      ? distinctPicks
-      : rankBookableOptions(groundedPool, NEUTRAL_PREFERENCES, MAX_BOOKABLE_OPTIONS);
+  // The deterministic floor takes over in two cases (design doc, §"propose_options
+  // validation and grounding"): the model proposed several slots for the same
+  // provider (deduplication dropped something), OR it under-proposed — fewer
+  // distinct providers than the pool could actually fill up to the cap.
+  const availableProviderCount = new Set(groundedPool.map((option) => option.npi)).size;
+  const fillableCount = Math.min(MAX_BOOKABLE_OPTIONS, availableProviderCount);
+  const modelPicksSatisfyTheCap = distinctPicks.length === groundedPicks.length && distinctPicks.length >= fillableCount;
+  const options = modelPicksSatisfyTheCap
+    ? distinctPicks
+    : rankBookableOptions(groundedPool, NEUTRAL_PREFERENCES, MAX_BOOKABLE_OPTIONS);
 
   return { ok: true, specialtyCode: specialtyDef.nuccCode, reason: args.reason, summary: args.summary, options };
 }
