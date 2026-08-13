@@ -1,14 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { BookableOption } from '../../bots/agent/lib/bookableOptions';
-import {
-  bookingStarted,
-  clarificationRequested,
-  initialBookingAgentState,
-  optionSelected,
-  optionsReceived,
-  searchStarted,
-  slotTaken,
-} from './bookingAgentModel';
+import { bookingStarted, optionSelected, optionsReceived, slotTaken } from './bookingAgentModel';
 
 function option(id: string): BookableOption {
   return {
@@ -26,65 +18,35 @@ function option(id: string): BookableOption {
 }
 
 describe('bookingAgentModel', () => {
-  test('allows one clarification and turns a second ambiguous result into an error', () => {
-    const first = clarificationRequested(searchStarted(initialBookingAgentState, 'pain'));
-    expect(first).toMatchObject({ phase: 'clarifying', clarificationCount: 1 });
-
-    const second = clarificationRequested(searchStarted(first, 'pain near my jaw'));
-    expect(second).toMatchObject({ phase: 'error', clarificationCount: 2 });
-  });
-
-  test('stores at most three grounded options and the authoritative summary id', () => {
-    const received = optionsReceived(searchStarted(initialBookingAgentState, 'morning doctor'), {
-      options: [option('one'), option('two'), option('three'), option('four')],
-      preferences: { timeOfDay: 'morning', preferPreviousDoctor: true, preferNearby: true },
-      summaryCommunicationId: 'summary-1',
-    });
+  test('stores at most eight grounded options and the authoritative summary id', () => {
+    const nineOptions = Array.from({ length: 9 }, (_, i) => option(String(i + 1)));
+    const received = optionsReceived({ options: nineOptions, summaryCommunicationId: 'summary-1' });
 
     expect(received.phase).toBe('showing-options');
-    expect(received.options.map(({ id }) => id)).toEqual(['one', 'two', 'three']);
+    expect(received.options).toHaveLength(8);
     expect(received.summaryCommunicationId).toBe('summary-1');
   });
 
   test('selecting an option enters confirmation with that exact option', () => {
     const selected = option('two');
-    const state = optionSelected(
-      optionsReceived(initialBookingAgentState, {
-        options: [option('one'), selected],
-        preferences: { preferPreviousDoctor: false, preferNearby: false },
-        summaryCommunicationId: 'summary-1',
-      }),
-      selected
-    );
+    const state = optionSelected(optionsReceived({ options: [option('one'), selected], summaryCommunicationId: 'summary-1' }), selected);
 
     expect(state.phase).toBe('confirming');
     expect(state.selectedOption).toBe(selected);
   });
 
   test('booking can only start from a complete confirmation state', () => {
-    expect(() => bookingStarted(initialBookingAgentState)).toThrow('Booking confirmation is not pending');
-    const incomplete = { ...initialBookingAgentState, phase: 'confirming' as const, selectedOption: option('one') };
-    expect(() => bookingStarted(incomplete)).toThrow('Booking confirmation is not pending');
+    const showingOptions = optionsReceived({ options: [option('one')], summaryCommunicationId: 'summary-1' });
+    expect(() => bookingStarted(showingOptions)).toThrow('Booking confirmation is not pending');
 
-    const complete = optionSelected(
-      optionsReceived(initialBookingAgentState, {
-        options: [option('one')],
-        preferences: { preferPreviousDoctor: false, preferNearby: false },
-        summaryCommunicationId: 'summary-1',
-      }),
-      option('one')
-    );
+    const complete = optionSelected(showingOptions, option('one'));
     expect(bookingStarted(complete).phase).toBe('booking');
   });
 
   test('slot taken removes only the selected option and returns to the remaining results', () => {
     const selected = option('two');
     const confirming = optionSelected(
-      optionsReceived(initialBookingAgentState, {
-        options: [option('one'), selected, option('three')],
-        preferences: { preferPreviousDoctor: false, preferNearby: false },
-        summaryCommunicationId: 'summary-1',
-      }),
+      optionsReceived({ options: [option('one'), selected, option('three')], summaryCommunicationId: 'summary-1' }),
       selected
     );
 

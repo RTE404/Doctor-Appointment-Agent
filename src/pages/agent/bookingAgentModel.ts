@@ -1,19 +1,10 @@
-import type { FindBookableOptionsResult } from '../../bots/agent/agent-find-bookable-options.js';
 import type { BookableOption } from '../../bots/agent/lib/bookableOptions.js';
+import { MAX_BOOKABLE_OPTIONS } from '../../bots/agent/lib/proposeOptions.js';
 
-export type BookingAgentPhase =
-  | 'collecting'
-  | 'searching'
-  | 'clarifying'
-  | 'showing-options'
-  | 'confirming'
-  | 'booking'
-  | 'error';
+export type BookingAgentPhase = 'showing-options' | 'confirming' | 'booking';
 
 export interface BookingAgentState {
   phase: BookingAgentPhase;
-  complaintText: string;
-  clarificationCount: number;
   options: BookableOption[];
   selectedOption?: BookableOption;
   summaryCommunicationId?: string;
@@ -26,46 +17,10 @@ export interface BookingInProgressState extends BookingAgentState {
   summaryCommunicationId: string;
 }
 
-type SuccessfulOptionsResult = Exclude<FindBookableOptionsResult, { needsClarification: true }>;
-
-export const initialBookingAgentState: BookingAgentState = {
-  phase: 'collecting',
-  complaintText: '',
-  clarificationCount: 0,
-  options: [],
-  slotTaken: false,
-};
-
-export function searchStarted(state: BookingAgentState, complaintText: string): BookingAgentState {
+export function optionsReceived(result: { options: BookableOption[]; summaryCommunicationId: string }): BookingAgentState {
   return {
-    ...state,
-    phase: 'searching',
-    complaintText,
-    selectedOption: undefined,
-    slotTaken: false,
-  };
-}
-
-export function clarificationRequested(state: BookingAgentState): BookingAgentState {
-  const clarificationCount = state.clarificationCount + 1;
-  return {
-    ...state,
-    phase: clarificationCount > 1 ? 'error' : 'clarifying',
-    clarificationCount,
-    options: [],
-    selectedOption: undefined,
-    summaryCommunicationId: undefined,
-  };
-}
-
-export function optionsReceived(
-  state: BookingAgentState,
-  result: SuccessfulOptionsResult
-): BookingAgentState {
-  return {
-    ...state,
     phase: 'showing-options',
-    options: result.options.slice(0, 3),
+    options: result.options.slice(0, MAX_BOOKABLE_OPTIONS),
     selectedOption: undefined,
     summaryCommunicationId: result.summaryCommunicationId,
     slotTaken: false,
