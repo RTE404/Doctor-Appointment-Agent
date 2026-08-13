@@ -1,11 +1,9 @@
 // src/bots/agent/agent-intake.ts
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import type { Communication } from '@medplum/fhirtypes';
-import { withDemoGeneratedTag } from '../../demo/demoTag.js';
 import { normalizeLlmSpecialty } from '../../config/specialties.js';
 import { loadPatientClinicalContext } from './lib/patientContext.js';
 import { INTAKE_SYSTEM_PROMPT, buildIntakeUserPrompt } from './lib/prompts.js';
-import { buildGeminiChatCompletionBody } from './lib/geminiRequest.js';
 import { normalizeSchedulingPreferences } from './lib/schedulingPreferences.js';
 import type { SchedulingPreferences } from './lib/schedulingPreferences.js';
 
@@ -30,15 +28,23 @@ type GeminiCaller = (apiKey: string, systemPrompt: string, userPrompt: string) =
 let geminiCaller: GeminiCaller = callGeminiForIntake;
 
 /** Test-only seam — swaps the real Gemini call for a stub. */
-export function __setGeminiCallerForTests(fn?: GeminiCaller): void {
-  geminiCaller = fn ?? callGeminiForIntake;
+export function __setGeminiCallerForTests(fn: GeminiCaller): void {
+  geminiCaller = fn;
 }
 
 async function callGeminiForIntake(apiKey: string, systemPrompt: string, userPrompt: string): Promise<GeminiIntakeResult> {
   const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildGeminiChatCompletionBody(systemPrompt, userPrompt, { jsonResponse: true })),
+    body: JSON.stringify({
+      model: 'gemini-3.5-flash-lite',
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    }),
   });
   if (!response.ok) {
     throw new Error(`Gemini request failed: ${response.status}`);
@@ -82,7 +88,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<IntakeInpu
     subject: { reference: `Patient/${patientId}` },
     sender: { reference: `Device/${agentDevice.id}` },
     payload: [{ contentString: geminiResult.summary }],
-    meta: withDemoGeneratedTag({ tag: [{ code: 'ai-generated' }] }),
+    meta: { tag: [{ code: 'ai-generated' }] },
   });
 
   return {

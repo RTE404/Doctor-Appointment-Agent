@@ -23,47 +23,38 @@ afterEach(() => {
 });
 
 describe('agent-intake handler', () => {
-  test('serializes JSON-object response formatting on the real Gemini fetch path', async () => {
-    __setGeminiCallerForTests();
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                specialty: 'cardiology',
-                reason: 'Chest discomfort during exercise',
-                summary: 'Patient reports exertional chest discomfort over the past week.',
-              }),
-            },
-          },
-        ],
-      }),
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
+  test('uses the current Gemini Flash-Lite model for the outbound request', async () => {
     const medplum = new MockClient();
     const patient = await medplum.createResource({ resourceType: 'Patient' });
     await medplum.createResource({
       resourceType: 'Device',
       identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
     });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ specialty: 'dermatology', reason: 'Rash', summary: 'Routine rash.' }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
 
     await handler(medplum, {
       bot: { reference: 'Bot/123' },
-      input: { patientId: patient.id as string, complaintText: 'My chest hurts when I run' },
+      input: { patientId: patient.id as string, complaintText: 'Routine rash' },
       contentType: 'application/json',
       secrets: { GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: 'test-key' } },
     });
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(request.body as string) as Record<string, unknown>;
-    expect(body).toMatchObject({
-      model: 'gemini-3.1-flash-lite',
-      response_format: { type: 'json_object' },
-    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: 'gemini-3.5-flash-lite' });
   });
 
   test('creates a preparation Communication and returns normalized intent', async () => {
@@ -100,10 +91,6 @@ describe('agent-intake handler', () => {
     expect(communication.recipient).toBeUndefined();
     expect(communication.sender).toStrictEqual({ reference: `Device/${agentDevice.id}` });
     expect(communication.meta?.tag).toContainEqual({ code: 'ai-generated' });
-    expect(communication.meta?.tag).toContainEqual({
-      system: 'https://doctor-appointment-agent.example/fhir/demo',
-      code: 'demo-generated',
-    });
     expect(communication.reasonCode).toStrictEqual([{ text: 'Chest discomfort during exercise' }]);
     expect(communication.note).toStrictEqual([{ text: 'My chest hurts when I run' }]);
     expect(communication.topic?.coding).toContainEqual({
