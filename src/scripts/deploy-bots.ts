@@ -14,10 +14,6 @@ interface BotDescription {
 
 const Bots: BotDescription[] = [
   {
-    src: 'src/bots/core/block-availability.ts',
-    dist: 'dist/bots/core/block-availability.js',
-  },
-  {
     src: 'src/bots/core/reschedule-appointment.ts',
     dist: 'dist/bots/core/reschedule-appointment.js',
   },

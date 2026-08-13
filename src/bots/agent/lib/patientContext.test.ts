@@ -10,7 +10,7 @@ import { loadPatientClinicalContext } from './patientContext';
 // @medplum/mock's mocks/searchparameters.json) — none for Condition,
 // MedicationRequest, AllergyIntolerance, or Encounter. Every searchResources
 // call on those types silently returns zero results without this setup,
-// which matches this project's existing pattern in block-availability.test.ts.
+// which matches this project's existing pattern in agent-booking-chat.test.ts.
 beforeAll(() => {
   indexStructureDefinitionBundle(readJson('fhir/r4/profiles-types.json') as Bundle);
   indexStructureDefinitionBundle(readJson('fhir/r4/profiles-resources.json') as Bundle);

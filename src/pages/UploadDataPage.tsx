@@ -167,7 +167,6 @@ function checkBotsUploaded(medplum: MedplumClient): boolean {
     (bot) =>
       bot.name &&
       [
-        'block-availability',
         'reschedule-appointment',
         'agent-find-doctors',
         'agent-ensure-doctor',
@@ -177,7 +176,7 @@ function checkBotsUploaded(medplum: MedplumClient): boolean {
       ].includes(bot.name)
   );
 
-  if (exampleBots.length === 7) {
+  if (exampleBots.length === 6) {
     return true;
   }
   return false;

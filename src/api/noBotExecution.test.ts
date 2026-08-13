@@ -1,8 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
 const workflowFiles = [
-  '../components/actions/BlockAvailability.tsx',
-  '../components/actions/CreateUpdateSlot.tsx',
   '../components/actions/RescheduleAppointment.tsx',
   '../pages/agent/PatientHistoryPage.tsx',
   '../pages/agent/DoctorResultsPage.tsx',
