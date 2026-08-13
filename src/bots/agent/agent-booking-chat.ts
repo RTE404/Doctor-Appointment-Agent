@@ -186,7 +186,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookingCha
         }
         const summaryCommunicationId = await writeSummaryCommunication(medplum, patientId, resolved);
         session = { ...session, transcript: appendSkippedRemainder(session.transcript, toolCalls, i, call, { ok: true }) };
-        await persistBookingSession(medplum, session, 'completed');
+        await persistBookingSession(medplum, session, 'in-progress');
         return { kind: 'options', sessionId: session.communication.id as string, options: resolved.options, summaryCommunicationId };
       }
 

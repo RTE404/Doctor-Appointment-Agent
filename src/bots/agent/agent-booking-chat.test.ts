@@ -168,7 +168,7 @@ describe('agent-booking-chat handler', () => {
     expect(communication.status).toBe('stopped');
   });
 
-  test('propose_options success returns grounded options and a summary Communication id, and completes the session', async () => {
+  test('propose_options success returns grounded options and a summary Communication id, and keeps the session resumable', async () => {
     const medplum = new MockClient();
     const { patientId } = await seedFixtures(medplum);
     await seedPreviousPhysician(medplum, patientId, '1000000001');
@@ -251,7 +251,69 @@ describe('agent-booking-chat handler', () => {
     expect(summary.status).toBe('preparation');
     expect(summary.topic?.coding?.[0]).toMatchObject({ code: '208D00000X' });
     const session = await medplum.readResource('Communication', result.sessionId);
-    expect(session.status).toBe('completed');
+    expect(session.status).toBe('in-progress');
+  });
+
+  test('a follow-up message after options were proposed resumes the same session instead of being rejected', async () => {
+    const medplum = new MockClient();
+    const { patientId } = await seedFixtures(medplum);
+    await seedPreviousPhysician(medplum, patientId, '1000000001');
+    const availability = { start: '2026-08-14T13:00:00.000Z', end: '2026-08-14T13:30:00.000Z' };
+    const originalGet = medplum.get.bind(medplum);
+    medplum.get = (async (url: string | URL, options?: unknown) => {
+      const asUrl = typeof url === 'string' ? new URL(url) : url;
+      if (asUrl.pathname.includes('$find')) {
+        return {
+          resourceType: 'Bundle',
+          type: 'searchset',
+          entry: [{ resource: { resourceType: 'Appointment', status: 'proposed', ...availability, participant: [] } }],
+        };
+      }
+      return originalGet(url as never, options as never);
+    }) as typeof medplum.get;
+
+    let call = 0;
+    __setGeminiToolCallerForTests(async () => {
+      call += 1;
+      if (call === 1) return assistantToolCalls([searchPreviousPhysicianCall('call-0')]);
+      if (call === 2) return assistantToolCalls([checkAvailabilityCall('call-1', '1000000001')]);
+      if (call === 3) {
+        return {
+          message: {
+            role: 'assistant' as const,
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-2',
+                type: 'function' as const,
+                function: {
+                  name: 'propose_options',
+                  arguments: JSON.stringify({
+                    specialty: 'General Practice',
+                    reason: 'Routine visit',
+                    summary: 'Patient requests a routine visit.',
+                    picks: [{ npi: '1000000001', start: availability.start, end: availability.end, reasoning: 'earliest' }],
+                  }),
+                },
+              },
+            ],
+          },
+        };
+      }
+      // The follow-up turn: proves the resumed session still carries the
+      // earlier patient message and tool history in its transcript.
+      return toolCallResponse('call-3', 'ask_clarifying_question', { question: 'What time works instead?' });
+    });
+
+    const first = await handler(medplum, event({ patientId, message: 'Find me a doctor' }));
+    if (first.kind !== 'options') throw new Error('expected options');
+
+    const second = await handler(
+      medplum,
+      event({ patientId, message: 'None of those work, try afternoons instead', sessionId: first.sessionId })
+    );
+
+    expect(second).toMatchObject({ kind: 'question', reply: 'What time works instead?', sessionId: first.sessionId });
   });
 
   // Exercises the real seam between the two bots: agent-booking-chat's actual
