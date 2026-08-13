@@ -10,6 +10,7 @@ import { searchNppesDoctors } from './nppes.js';
 import { rankCandidates } from './ranking.js';
 import { timezoneForState } from './timezones.js';
 import type { BookableOption } from './bookableOptions.js';
+import type { BookingChatMessage } from './bookingSession.js';
 
 const NPPES_SEARCH_LIMIT = 15;
 
@@ -52,12 +53,15 @@ export const BOOKING_CHAT_TOOL_SCHEMAS = [
       description: 'Check real bookable appointment times for one provider by NPI.',
       parameters: {
         type: 'object',
+        // `previousDoctor` and `distanceMiles` are deliberately NOT model
+        // inputs: both are rendered to the patient (a "Previously visited"
+        // badge and a distance figure), so they are derived server-side from
+        // the search result the NPI actually came from rather than trusted
+        // from an unverifiable model claim.
         properties: {
-          npi: { type: 'string' },
+          npi: { type: 'string', description: 'An NPI returned by a prior search_previous_physician or search_nppes call.' },
           startOffsetDays: { type: 'integer', minimum: 0, description: 'Days from now to start the search window. Default 0.' },
           windowDays: { type: 'integer', minimum: 1, maximum: 14, description: 'Length of the search window in days. Default 7.' },
-          previousDoctor: { type: 'boolean', description: 'Set true if this NPI was returned by search_previous_physician.' },
-          distanceMiles: { type: 'number', description: 'Distance in miles, if known from a prior search_nppes result.' },
         },
         required: ['npi'],
       },
@@ -118,7 +122,13 @@ export async function searchPreviousPhysicianTool(
 export async function searchNppesTool(medplum: MedplumClient, patient: Patient, specialtyCode: string): Promise<FoundCandidate[]> {
   const specialtyDef = SPECIALTY_TABLE.find((s) => s.nuccCode === specialtyCode);
   if (!specialtyDef) {
-    return [];
+    // An empty array here would be indistinguishable from "no doctors found
+    // nearby", so a mistyped/hallucinated code would silently burn loop steps
+    // with no corrective signal. The loop turns this throw into a tool-result
+    // error the model can see and self-correct from.
+    throw new Error(
+      `"${specialtyCode}" is not a supported NUCC specialty code. Use one of the codes listed in the supported specialty table in your instructions.`
+    );
   }
   const nppesResults = await searchNppesDoctors(
     specialtyDef.nppesTaxonomyDescription,
@@ -129,6 +139,55 @@ export async function searchNppesTool(medplum: MedplumClient, patient: Patient, 
   );
   const ranked = rankCandidates(patientCoords(patient), nppesResults);
   return ranked.slice(0, NPPES_SEARCH_LIMIT).map((c) => ({ ...c, source: 'nppes' as const, npi: c.npi }));
+}
+
+const SEARCH_TOOL_NAMES = new Set(['search_previous_physician', 'search_nppes']);
+
+/**
+ * Indexes, by NPI, every provider a search tool actually returned earlier in
+ * this session's transcript. Two things depend on it:
+ *
+ * 1. `check_availability` must pass the originating candidate to
+ *    `ensurePractitionerAndSchedule`, so a newly provisioned PractitionerRole
+ *    is seeded with the specialty the provider was *found under* — NPPES can
+ *    match a provider on a non-primary taxonomy, and a bare NPI re-lookup
+ *    would pick their primary one instead, which `agent-book-appointment`
+ *    then rejects as a specialty mismatch.
+ * 2. Provenance: an NPI absent from this index never came from a real search,
+ *    so no FHIR resources should be provisioned for it at all.
+ *
+ * Mirrors `collectGroundedOptions` in ./proposeOptions.ts, which scans the
+ * same transcript for `check_availability` results.
+ */
+export function collectSearchedCandidates(transcript: BookingChatMessage[]): Map<string, FoundCandidate> {
+  const index = new Map<string, FoundCandidate>();
+  for (const message of transcript) {
+    if (message.role !== 'tool') continue;
+    let parsed: { tool?: string; result?: unknown };
+    try {
+      parsed = JSON.parse(message.content) as { tool?: string; result?: unknown };
+    } catch {
+      continue;
+    }
+    if (!parsed.tool || !SEARCH_TOOL_NAMES.has(parsed.tool)) continue;
+    // search_nppes returns an array; search_previous_physician returns one
+    // candidate or null. A failed call records an { error } object instead.
+    const entries = Array.isArray(parsed.result) ? parsed.result : [parsed.result];
+    for (const entry of entries) {
+      const candidate = entry as FoundCandidate | null | undefined;
+      if (!candidate || typeof candidate.npi !== 'string' || !candidate.npi) continue;
+      // A previous-physician match is never downgraded by a later NPPES hit
+      // on the same NPI: the 'previous' provenance drives the patient-visible
+      // "Previously visited" badge and must not be lost.
+      if (index.get(candidate.npi)?.source === 'previous') continue;
+      index.set(candidate.npi, candidate);
+    }
+  }
+  return index;
+}
+
+function candidateDistanceMiles(candidate: FoundCandidate): number | undefined {
+  return 'distanceMiles' in candidate ? candidate.distanceMiles : undefined;
 }
 
 function scheduleTimeZone(schedule: Schedule, healthcareServiceId: string, fallbackState: string | undefined): string {
@@ -147,11 +206,20 @@ function scheduleTimeZone(schedule: Schedule, healthcareServiceId: string, fallb
   );
 }
 
+/**
+ * `candidate` is required, not optional: it is the search result this NPI came
+ * from, resolved by the caller from the session transcript (see
+ * collectSearchedCandidates). Making it mandatory is what structurally
+ * guarantees both that a provisioned PractitionerRole carries the specialty
+ * the provider was matched on, and that availability is never checked — and
+ * FHIR resources never created — for an NPI no search ever returned.
+ */
 export async function checkAvailabilityTool(
   medplum: MedplumClient,
-  args: { npi: string; startOffsetDays?: number; windowDays?: number; previousDoctor?: boolean; distanceMiles?: number }
+  args: { npi: string; startOffsetDays?: number; windowDays?: number },
+  candidate: FoundCandidate
 ): Promise<BookableOption[]> {
-  const ensured = await ensurePractitionerAndSchedule(medplum, args.npi);
+  const ensured = await ensurePractitionerAndSchedule(medplum, args.npi, candidate);
   const [practitioner, schedule] = await Promise.all([
     medplum.readResource('Practitioner', ensured.practitionerId),
     medplum.readResource('Schedule', ensured.scheduleId),
@@ -183,8 +251,9 @@ export async function checkAvailabilityTool(
         start: resource.start,
         end: resource.end,
         timeZone,
-        previousDoctor: args.previousDoctor ?? false,
-        distanceMiles: args.distanceMiles,
+        // Derived from the search result, never from model-supplied args.
+        previousDoctor: candidate.source === 'previous',
+        distanceMiles: candidateDistanceMiles(candidate),
       },
     ];
   });

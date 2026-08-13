@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from 'vitest';
+import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
 import type { BotEvent } from '@medplum/core';
 import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
@@ -26,6 +26,55 @@ async function seedFixtures(medplum: MockClient): Promise<{ patientId: string }>
   await medplum.createResource({ resourceType: 'HealthcareService', name: 'Office Visit', active: true });
   const patient = await medplum.createResource({ resourceType: 'Patient' });
   return { patientId: patient.id as string };
+}
+
+/**
+ * check_availability only runs for an NPI a search tool actually returned in
+ * this session, so tests that need it drive search_previous_physician first —
+ * unlike search_nppes it resolves entirely against MockClient, with no network.
+ */
+async function seedPreviousPhysician(
+  medplum: MockClient,
+  patientId: string,
+  npi: string,
+  specialtyCode = '208D00000X'
+): Promise<void> {
+  const practitioner = await medplum.createResource({
+    resourceType: 'Practitioner',
+    identifier: [{ system: 'http://hl7.org/fhir/sid/us-npi', value: npi }],
+    name: [{ given: ['Test'], family: 'Doctor' }],
+  });
+  await medplum.createResource({
+    resourceType: 'PractitionerRole',
+    practitioner: { reference: `Practitioner/${practitioner.id}` },
+    specialty: [{ coding: [{ system: 'http://nucc.org/provider-taxonomy', code: specialtyCode }] }],
+  });
+  await medplum.createResource({
+    resourceType: 'Encounter',
+    status: 'finished',
+    class: { code: 'AMB' },
+    subject: { reference: `Patient/${patientId}` },
+    participant: [{ individual: { reference: `Practitioner/${practitioner.id}` } }],
+    period: { start: '2026-01-01T10:00:00.000Z' },
+  });
+}
+
+function searchPreviousPhysicianCall(id: string, specialtyCode = '208D00000X'): BookingToolCall {
+  return {
+    id,
+    type: 'function',
+    function: { name: 'search_previous_physician', arguments: JSON.stringify({ specialtyCode }) },
+  };
+}
+
+function checkAvailabilityCall(id: string, npi: string): BookingToolCall {
+  return { id, type: 'function', function: { name: 'check_availability', arguments: JSON.stringify({ npi }) } };
+}
+
+function assistantToolCalls(calls: BookingToolCall[]): {
+  message: { role: 'assistant'; content: null; tool_calls: BookingToolCall[] };
+} {
+  return { message: { role: 'assistant', content: null, tool_calls: calls } };
 }
 
 function event(input: BookingChatInput): BotEvent<BookingChatInput> {
@@ -120,21 +169,7 @@ describe('agent-booking-chat handler', () => {
   test('propose_options success returns grounded options and a summary Communication id, and completes the session', async () => {
     const medplum = new MockClient();
     const { patientId } = await seedFixtures(medplum);
-    // ensurePractitionerAndSchedule lazily provisions a Practitioner/Schedule
-    // for an NPI it hasn't seen before by calling out to the real NPPES
-    // registry (see ./lib/ensurePractitionerAndSchedule.ts). The synthetic
-    // NPI used below ('1000000001') isn't a real NPPES record, so without
-    // this stub the live lookup returns nothing and the tool call throws
-    // "No NPPES record found for NPI 1000000001" instead of exercising the
-    // check_availability -> propose_options path this test is about.
-    __setNppesLookupForTests(async (npi) => ({
-      npi,
-      firstName: 'Test',
-      lastName: 'Doctor',
-      nuccCode: '208D00000X',
-      nuccDisplay: 'General Practice Physician',
-      address: { state: 'MA', city: 'Boston' },
-    }));
+    await seedPreviousPhysician(medplum, patientId, '1000000001');
     const availability = [
       {
         id: '1000000001|2026-08-14T13:00:00.000Z|2026-08-14T13:30:00.000Z',
@@ -152,13 +187,10 @@ describe('agent-booking-chat handler', () => {
     __setGeminiToolCallerForTests(async () => {
       call += 1;
       if (call === 1) {
-        return {
-          message: {
-            role: 'assistant' as const,
-            content: null,
-            tool_calls: [{ id: 'call-1', type: 'function' as const, function: { name: 'check_availability', arguments: JSON.stringify({ npi: '1000000001' }) } }],
-          },
-        };
+        return assistantToolCalls([searchPreviousPhysicianCall('call-0')]);
+      }
+      if (call === 2) {
+        return assistantToolCalls([checkAvailabilityCall('call-1', '1000000001')]);
       }
       return {
         message: {
@@ -317,14 +349,7 @@ describe('agent-booking-chat handler', () => {
   test('propose_options with an empty reason or summary feeds an error back to the model and continues the loop instead of writing a Communication', async () => {
     const medplum = new MockClient();
     const { patientId } = await seedFixtures(medplum);
-    __setNppesLookupForTests(async (npi) => ({
-      npi,
-      firstName: 'Test',
-      lastName: 'Doctor',
-      nuccCode: '208D00000X',
-      nuccDisplay: 'General Practice Physician',
-      address: { state: 'MA', city: 'Boston' },
-    }));
+    await seedPreviousPhysician(medplum, patientId, '1000000001');
     const start = '2026-08-14T13:00:00.000Z';
     const end = '2026-08-14T13:30:00.000Z';
     const originalGet = medplum.get.bind(medplum);
@@ -344,15 +369,12 @@ describe('agent-booking-chat handler', () => {
     __setGeminiToolCallerForTests(async (transcript) => {
       call += 1;
       if (call === 1) {
-        return {
-          message: {
-            role: 'assistant' as const,
-            content: null,
-            tool_calls: [{ id: 'call-1', type: 'function' as const, function: { name: 'check_availability', arguments: JSON.stringify({ npi: '1000000001' }) } }],
-          },
-        };
+        return assistantToolCalls([searchPreviousPhysicianCall('call-0')]);
       }
       if (call === 2) {
+        return assistantToolCalls([checkAvailabilityCall('call-1', '1000000001')]);
+      }
+      if (call === 3) {
         return {
           message: {
             role: 'assistant' as const,
@@ -383,35 +405,34 @@ describe('agent-booking-chat handler', () => {
 
     const result = await handler(medplum, event({ patientId, message: 'Find me a doctor' }));
 
-    expect(call).toBe(3);
+    expect(call).toBe(4);
     expect(result).toMatchObject({ kind: 'question', reply: 'What is the reason for your visit?' });
   });
 
   test('a read-only tool that throws feeds the error back to the model and continues the loop instead of crashing the turn', async () => {
     const medplum = new MockClient();
     const { patientId } = await seedFixtures(medplum);
-    // __setNppesLookupForTests is a module-level seam shared across tests in
-    // this file (there's no afterEach reset — see the plan ledger's deferred
-    // minor findings), so an earlier test's successful stub could otherwise
-    // leak forward and mask the failure this test needs. Set it explicitly
-    // here so checkAvailabilityTool's underlying ensurePractitionerAndSchedule
-    // call deterministically throws "No NPPES record found", regardless of
-    // what order tests run in.
-    __setNppesLookupForTests(async () => undefined);
     let call = 0;
     __setGeminiToolCallerForTests(async (transcript) => {
       call += 1;
       if (call === 1) {
+        // An unrecognized NUCC code makes search_nppes throw rather than
+        // silently return [] — the model needs a corrective signal it can act
+        // on inside the step budget.
         return {
           message: {
             role: 'assistant' as const,
             content: null,
-            tool_calls: [{ id: 'call-1', type: 'function' as const, function: { name: 'check_availability', arguments: JSON.stringify({ npi: '9999999999' }) } }],
+            tool_calls: [
+              { id: 'call-1', type: 'function' as const, function: { name: 'search_nppes', arguments: JSON.stringify({ specialtyCode: 'not-a-code' }) } },
+            ],
           },
         };
       }
       expect(
-        transcript.some((m) => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('No NPPES record found'))
+        transcript.some(
+          (m) => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('is not a supported NUCC specialty code')
+        )
       ).toBe(true);
       return toolCallResponse('call-2', 'ask_clarifying_question', { question: 'Let me try someone else — any preference?' });
     });
@@ -420,5 +441,92 @@ describe('agent-booking-chat handler', () => {
 
     expect(call).toBe(2);
     expect(result).toMatchObject({ kind: 'question', reply: 'Let me try someone else — any preference?' });
+  });
+
+  test('rejects check_availability for an NPI no search returned, without provisioning any FHIR resources', async () => {
+    const medplum = new MockClient();
+    const { patientId } = await seedFixtures(medplum);
+    // If this NPI ever reached ensurePractitionerAndSchedule it would try to
+    // resolve it against NPPES and create a real Practitioner/PractitionerRole
+    // /Schedule for a provider nothing in this session ever verified.
+    __setNppesLookupForTests(async (npi) => ({
+      npi,
+      firstName: 'Ghost',
+      lastName: 'Doctor',
+      nuccCode: '208D00000X',
+      nuccDisplay: 'General Practice Physician',
+      address: { state: 'MA', city: 'Boston' },
+    }));
+    const createSpy = vi.spyOn(medplum, 'createResourceIfNoneExist');
+    let call = 0;
+    __setGeminiToolCallerForTests(async (transcript) => {
+      call += 1;
+      if (call === 1) {
+        return assistantToolCalls([checkAvailabilityCall('call-1', '9999999999')]);
+      }
+      expect(
+        transcript.some(
+          (m) =>
+            m.role === 'tool' &&
+            typeof m.content === 'string' &&
+            m.content.includes('was not returned by search_previous_physician or search_nppes')
+        )
+      ).toBe(true);
+      return toolCallResponse('call-2', 'ask_clarifying_question', { question: 'Which specialty should I look for?' });
+    });
+
+    const result = await handler(medplum, event({ patientId, message: 'Book me with 9999999999' }));
+
+    expect(call).toBe(2);
+    expect(result).toMatchObject({ kind: 'question' });
+    expect(createSpy).not.toHaveBeenCalled();
+    createSpy.mockRestore();
+  });
+
+  test('check_availability derives previousDoctor from the search result rather than any model claim', async () => {
+    const medplum = new MockClient();
+    const { patientId } = await seedFixtures(medplum);
+    await seedPreviousPhysician(medplum, patientId, '1000000002');
+    const start = '2026-08-14T13:00:00.000Z';
+    const end = '2026-08-14T13:30:00.000Z';
+    const originalGet = medplum.get.bind(medplum);
+    medplum.get = (async (url: string | URL, options?: unknown) => {
+      const asUrl = typeof url === 'string' ? new URL(url) : url;
+      if (asUrl.pathname.includes('$find')) {
+        return {
+          resourceType: 'Bundle',
+          type: 'searchset',
+          entry: [{ resource: { resourceType: 'Appointment', status: 'proposed', start, end, participant: [] } }],
+        };
+      }
+      return originalGet(url as never, options as never);
+    }) as typeof medplum.get;
+
+    let call = 0;
+    __setGeminiToolCallerForTests(async () => {
+      call += 1;
+      if (call === 1) return assistantToolCalls([searchPreviousPhysicianCall('call-0')]);
+      if (call === 2) return assistantToolCalls([checkAvailabilityCall('call-1', '1000000002')]);
+      return assistantToolCalls([
+        {
+          id: 'call-2',
+          type: 'function',
+          function: {
+            name: 'propose_options',
+            arguments: JSON.stringify({
+              specialty: 'General Practice',
+              reason: 'Routine visit',
+              summary: 'Patient requests a routine visit.',
+              picks: [{ npi: '1000000002', start, end, reasoning: 'seen before' }],
+            }),
+          },
+        },
+      ]);
+    });
+
+    const result = await handler(medplum, event({ patientId, message: 'Find me a doctor' }));
+
+    if (result.kind !== 'options') throw new Error('expected options');
+    expect(result.options[0].previousDoctor).toBe(true);
   });
 });

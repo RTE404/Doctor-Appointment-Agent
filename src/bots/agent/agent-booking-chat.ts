@@ -6,6 +6,7 @@ import { loadPatientClinicalContext } from './lib/patientContext.js';
 import {
   BOOKING_CHAT_TOOL_SCHEMAS,
   checkAvailabilityTool,
+  collectSearchedCandidates,
   searchNppesTool,
   searchPreviousPhysicianTool,
 } from './lib/bookingChatTools.js';
@@ -85,7 +86,13 @@ async function writeSummaryCommunication(
   return communication.id as string;
 }
 
-async function executeReadOnlyTool(medplum: MedplumClient, patientId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+async function executeReadOnlyTool(
+  medplum: MedplumClient,
+  patientId: string,
+  name: string,
+  args: Record<string, unknown>,
+  transcript: BookingChatMessage[]
+): Promise<unknown> {
   switch (name) {
     case 'search_previous_physician':
       return searchPreviousPhysicianTool(medplum, patientId, args.specialtyCode as string);
@@ -93,8 +100,22 @@ async function executeReadOnlyTool(medplum: MedplumClient, patientId: string, na
       const patient = await medplum.readResource('Patient', patientId);
       return searchNppesTool(medplum, patient, args.specialtyCode as string);
     }
-    case 'check_availability':
-      return checkAvailabilityTool(medplum, args as { npi: string; startOffsetDays?: number; windowDays?: number; previousDoctor?: boolean; distanceMiles?: number });
+    case 'check_availability': {
+      const npi = typeof args.npi === 'string' ? args.npi : '';
+      // Provenance gate: ensurePractitionerAndSchedule creates real
+      // Practitioner/PractitionerRole/Schedule resources, so it must only ever
+      // run for an NPI a search tool actually returned in this session. The
+      // resolved candidate additionally carries the specialty the provider was
+      // matched on and its real ranked distance — both of which
+      // check_availability derives from it rather than trusting the model.
+      const candidate = collectSearchedCandidates(transcript).get(npi);
+      if (!candidate) {
+        return {
+          error: `NPI ${npi} was not returned by search_previous_physician or search_nppes in this conversation. Run one of those searches first and only check availability for an NPI it returned.`,
+        };
+      }
+      return checkAvailabilityTool(medplum, args as { npi: string; startOffsetDays?: number; windowDays?: number }, candidate);
+    }
     default:
       throw new Error(`Unknown booking chat tool: ${name}`);
   }
@@ -170,7 +191,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookingCha
       }
 
       try {
-        const output = await executeReadOnlyTool(medplum, patientId, call.function.name, args);
+        const output = await executeReadOnlyTool(medplum, patientId, call.function.name, args, session.transcript);
         session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, output)] };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
