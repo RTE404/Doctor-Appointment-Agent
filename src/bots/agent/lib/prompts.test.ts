@@ -10,7 +10,7 @@ import type {
   Practitioner,
 } from '@medplum/fhirtypes';
 import { describe, expect, test } from 'vitest';
-import { CHAT_SYSTEM_PROMPT, INTAKE_SYSTEM_PROMPT, buildChatUserPrompt, containsInterpretationLanguage } from './prompts';
+import { BOOKING_CHAT_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, INTAKE_SYSTEM_PROMPT, buildChatUserPrompt, buildPatientContextMessage, containsInterpretationLanguage } from './prompts';
 
 describe('buildChatUserPrompt', () => {
   test('includes complete demographics, a hand-checked age, and full resources of every type', () => {
@@ -237,5 +237,42 @@ describe('containsInterpretationLanguage', () => {
 
   test('does not flag a plain factual relay', () => {
     expect(containsInterpretationLanguage('The record shows a prescription for Albuterol, filled on 2026-01-05.')).toBe(false);
+  });
+});
+
+describe('booking chat prompts', () => {
+  test('system prompt instructs the model to never diagnose and to ground every pick in tool results', () => {
+    const prompt = BOOKING_CHAT_SYSTEM_PROMPT.toLowerCase();
+    expect(prompt).toContain('never diagnose');
+    expect(prompt).toContain('does not triage');
+    expect(prompt).toContain('check_availability');
+    expect(prompt).toContain('propose_options');
+    expect(prompt).toContain('ask_clarifying_question');
+  });
+
+  test('buildPatientContextMessage summarizes conditions, medications, and allergies', () => {
+    const message = buildPatientContextMessage({
+      patient: { resourceType: 'Patient' },
+      conditions: [{ resourceType: 'Condition', code: { text: 'Asthma' } }],
+      medications: [{ resourceType: 'MedicationRequest', status: 'active', intent: 'order', medicationCodeableConcept: { text: 'Albuterol' } }],
+      allergies: [{ resourceType: 'AllergyIntolerance', code: { text: 'Penicillin' } }],
+      encounters: [],
+    });
+
+    expect(message).toContain('Asthma');
+    expect(message).toContain('Albuterol');
+    expect(message).toContain('Penicillin');
+  });
+
+  test('buildPatientContextMessage reports "none recorded" for empty history', () => {
+    const message = buildPatientContextMessage({
+      patient: { resourceType: 'Patient' },
+      conditions: [],
+      medications: [],
+      allergies: [],
+      encounters: [],
+    });
+
+    expect(message).toContain('none recorded');
   });
 });
