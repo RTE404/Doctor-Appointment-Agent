@@ -1,14 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { BookableOption } from '../../bots/agent/lib/bookableOptions';
-import {
-  confirmSelectedOption,
-  searchForBookableOptions,
-} from './bookingAgentController';
-import {
-  initialBookingAgentState,
-  optionSelected,
-  optionsReceived,
-} from './bookingAgentModel';
+import { confirmSelectedOption } from './bookingAgentController';
+import { optionSelected, optionsReceived } from './bookingAgentModel';
 
 function option(id: string): BookableOption {
   return {
@@ -27,35 +20,10 @@ function option(id: string): BookableOption {
 
 function confirmingState(): ReturnType<typeof optionSelected> {
   const selected = option('one');
-  return optionSelected(
-    optionsReceived(initialBookingAgentState, {
-      options: [selected, option('two')],
-      preferences: { timeOfDay: 'morning', preferPreviousDoctor: true, preferNearby: true },
-      summaryCommunicationId: 'summary-1',
-    }),
-    selected
-  );
+  return optionSelected(optionsReceived({ options: [selected, option('two')], summaryCommunicationId: 'summary-1' }), selected);
 }
 
 describe('bookingAgentController', () => {
-  test('executes discovery and returns the deterministic options state', async () => {
-    const onSearchStarted = vi.fn();
-    const discover = vi.fn(async () => ({
-      options: [option('one')],
-      preferences: { timeOfDay: 'morning' as const, preferPreviousDoctor: true, preferNearby: true },
-      summaryCommunicationId: 'summary-1',
-    }));
-
-    const result = await searchForBookableOptions(initialBookingAgentState, 'patient-1', 'morning doctor', {
-      discover,
-      onSearchStarted,
-    });
-
-    expect(onSearchStarted).toHaveBeenCalledWith(expect.objectContaining({ phase: 'searching' }));
-    expect(discover).toHaveBeenCalledWith({ patientId: 'patient-1', complaintText: 'morning doctor' });
-    expect(result).toMatchObject({ phase: 'showing-options', summaryCommunicationId: 'summary-1' });
-  });
-
   test('selection alone never books; confirmation books once with the exact grounded payload and navigates', async () => {
     const state = confirmingState();
     const book = vi.fn(async () => ({
@@ -97,10 +65,11 @@ describe('bookingAgentController', () => {
 
   test('rejects booking before confirmation without calling the booking action', async () => {
     const book = vi.fn();
+    const showingOptions = optionsReceived({ options: [option('one')], summaryCommunicationId: 'summary-1' });
 
-    await expect(
-      confirmSelectedOption(initialBookingAgentState, 'patient-1', { book, navigate: vi.fn() })
-    ).rejects.toThrow('Booking confirmation is not pending');
+    await expect(confirmSelectedOption(showingOptions, 'patient-1', { book, navigate: vi.fn() })).rejects.toThrow(
+      'Booking confirmation is not pending'
+    );
     expect(book).not.toHaveBeenCalled();
   });
 });
