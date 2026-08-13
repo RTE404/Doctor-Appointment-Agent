@@ -22,10 +22,6 @@ const Bots: BotDescription[] = [
     dist: 'dist/bots/core/reschedule-appointment.js',
   },
   {
-    src: 'src/bots/agent/agent-intake.ts',
-    dist: 'dist/bots/agent/agent-intake.js',
-  },
-  {
     src: 'src/bots/agent/agent-find-doctors.ts',
     dist: 'dist/bots/agent/agent-find-doctors.js',
   },

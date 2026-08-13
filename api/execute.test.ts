@@ -29,7 +29,7 @@ const medplum = { getProfileAsync: async () => profile } as unknown as MedplumCl
 const workerMedplum = { getProfileAsync: async () => ({ resourceType: 'ClientApplication' as const, id: 'worker-client' }) } as unknown as MedplumClient;
 
 test('allows the patient concierge discovery action', () => {
-  expect(ALLOWED_ACTIONS).toContain('agent-find-bookable-options');
+  expect(ALLOWED_ACTIONS).toContain('agent-booking-chat');
 });
 
 test('allows the booking chat action', () => {
@@ -104,7 +104,7 @@ describe('dispatchAction', () => {
     expect(seen[action]?.input).toEqual({ marker: action });
   });
 
-  test.each(['agent-intake', 'agent-find-bookable-options', 'agent-patient-chat'] as const)('passes GEMINI_API_KEY only to %s', async (action) => {
+  test.each(['agent-booking-chat', 'agent-patient-chat'] as const)('passes GEMINI_API_KEY only to %s', async (action) => {
     const { handlers, seen } = createHandlers();
 
     await dispatchAction(medplum, action, {}, 'gemini-key', handlers);
@@ -148,7 +148,7 @@ describe('handleExecuteRequest', () => {
 
   test('returns 401 without a bearer token', async () => {
     const response = await handleExecuteRequest(
-      request({ action: 'agent-intake', input: {} }),
+      request({ action: 'agent-booking-chat', input: {} }),
       environment,
       createDependencies(createHandlers().handlers)
     );
@@ -162,7 +162,7 @@ describe('handleExecuteRequest', () => {
       throw new Error('invalid-token-marker');
     };
 
-    const response = await handleExecuteRequest(request({ action: 'agent-intake', input: {} }, 'Bearer valid-token'), environment, dependencies);
+    const response = await handleExecuteRequest(request({ action: 'agent-booking-chat', input: {} }, 'Bearer valid-token'), environment, dependencies);
 
     expect(response).toEqual({ status: 401, body: { error: 'Authentication required' } });
     expect(JSON.stringify(response)).not.toContain('valid-token');
@@ -172,7 +172,7 @@ describe('handleExecuteRequest', () => {
     const dependencies = createDependencies(createHandlers().handlers);
     dependencies.authenticate = async () => ({ medplum, profile, projectId: 'other-project' });
 
-    const response = await handleExecuteRequest(request({ action: 'agent-intake', input: {} }, 'Bearer valid-token'), environment, dependencies);
+    const response = await handleExecuteRequest(request({ action: 'agent-booking-chat', input: {} }, 'Bearer valid-token'), environment, dependencies);
 
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ error: 'Project access denied' });
@@ -186,16 +186,16 @@ describe('handleExecuteRequest', () => {
       projectId: 'target-project',
     });
 
-    const response = await handleExecuteRequest(request({ action: 'agent-intake', input: {} }, 'Bearer personal-token'), environment, dependencies);
+    const response = await handleExecuteRequest(request({ action: 'agent-booking-chat', input: {} }, 'Bearer personal-token'), environment, dependencies);
 
     expect(response).toEqual({ status: 403, body: { error: 'Project access denied' } });
   });
 
   test('executes an allowlisted action for a valid target-project session', async () => {
     const handlers = createHandlers();
-    handlers.handlers['agent-intake'] = async () => ({ ok: true });
+    handlers.handlers['agent-booking-chat'] = async () => ({ ok: true });
     const response = await handleExecuteRequest(
-      request({ action: 'agent-intake', input: { patientId: 'synthetic' } }, 'Bearer valid-token'),
+      request({ action: 'agent-booking-chat', input: { patientId: 'synthetic' } }, 'Bearer valid-token'),
       environment,
       createDependencies(handlers.handlers)
     );
@@ -235,12 +235,12 @@ describe('handleExecuteRequest', () => {
   });
 
   test.each([
-    ['missing content type', request({ action: 'agent-intake', input: {} }, 'Bearer valid-token', '')],
-    ['wrong content type', request({ action: 'agent-intake', input: {} }, 'Bearer valid-token', 'text/plain')],
-    ['JSONP content type', request({ action: 'agent-intake', input: {} }, 'Bearer valid-token', 'application/jsonp')],
+    ['missing content type', request({ action: 'agent-booking-chat', input: {} }, 'Bearer valid-token', '')],
+    ['wrong content type', request({ action: 'agent-booking-chat', input: {} }, 'Bearer valid-token', 'text/plain')],
+    ['JSONP content type', request({ action: 'agent-booking-chat', input: {} }, 'Bearer valid-token', 'application/jsonp')],
     ['malformed JSON', request('{', 'Bearer valid-token')],
     ['non-object body', request(['not', 'an', 'object'], 'Bearer valid-token')],
-    ['non-object input', request({ action: 'agent-intake', input: [] }, 'Bearer valid-token')],
+    ['non-object input', request({ action: 'agent-booking-chat', input: [] }, 'Bearer valid-token')],
     ['removed schedule mutation action', request({ action: 'block-availability', input: {} }, 'Bearer valid-token')],
   ])('returns 400 for %s', async (_name, invalidRequest) => {
     const response = await handleExecuteRequest(invalidRequest, environment, createDependencies(createHandlers().handlers));
@@ -268,7 +268,7 @@ describe('handleExecuteRequest', () => {
     expect(response).toEqual({ status: 500, body: { error: 'Action execution failed' } });
   });
 
-  test.each(['agent-intake', 'agent-find-bookable-options'] as const)(
+  test.each(['agent-booking-chat', 'agent-patient-chat'] as const)(
     'returns a sanitized 500 response when Gemini configuration is missing for %s',
     async (action) => {
       const response = await handleExecuteRequest(
@@ -283,14 +283,14 @@ describe('handleExecuteRequest', () => {
 
   test('sanitizes handler failures without echoing token, key, or input markers', async () => {
     const { handlers } = createHandlers();
-    handlers['agent-intake'] = async () => {
+    handlers['agent-booking-chat'] = async () => {
       throw new Error('handler-input-marker gemini-key valid-token');
     };
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
       const response = await handleExecuteRequest(
-        request({ action: 'agent-intake', input: { marker: 'handler-input-marker' } }, 'Bearer valid-token'),
+        request({ action: 'agent-booking-chat', input: { marker: 'handler-input-marker' } }, 'Bearer valid-token'),
         environment,
         createDependencies(handlers)
       );
@@ -308,14 +308,14 @@ describe('handleExecuteRequest', () => {
 
   test('logs only a safe diagnostic code for a Gemini HTTP failure', async () => {
     const { handlers } = createHandlers();
-    handlers['agent-intake'] = async () => {
+    handlers['agent-booking-chat'] = async () => {
       throw new Error('Gemini request failed: 403');
     };
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
       const response = await handleExecuteRequest(
-        request({ action: 'agent-intake', input: { marker: 'sensitive-input-marker' } }, 'Bearer sensitive-token-marker'),
+        request({ action: 'agent-booking-chat', input: { marker: 'sensitive-input-marker' } }, 'Bearer sensitive-token-marker'),
         environment,
         createDependencies(handlers)
       );

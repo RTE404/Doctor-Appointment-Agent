@@ -10,7 +10,7 @@ import type {
   Practitioner,
 } from '@medplum/fhirtypes';
 import { describe, expect, test } from 'vitest';
-import { BOOKING_CHAT_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, INTAKE_SYSTEM_PROMPT, buildChatUserPrompt, buildPatientContextMessage, containsInterpretationLanguage } from './prompts';
+import { BOOKING_CHAT_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, buildChatUserPrompt, buildPatientContextMessage, containsInterpretationLanguage } from './prompts';
 
 describe('buildChatUserPrompt', () => {
   test('includes complete demographics, a hand-checked age, and full resources of every type', () => {
@@ -195,22 +195,6 @@ describe('buildChatUserPrompt', () => {
 });
 
 describe('system prompts', () => {
-  test('intake prompt instructs the model to never diagnose', () => {
-    expect(INTAKE_SYSTEM_PROMPT.toLowerCase()).toContain('never diagnose');
-  });
-
-  test('intake prompt limits routing and scheduling preferences to the approved contract', () => {
-    const prompt = INTAKE_SYSTEM_PROMPT.toLowerCase();
-
-    expect(prompt).toContain('explicitly named specialty or referral');
-    expect(prompt).toContain('general practice');
-    expect(prompt).toContain('genuinely ambiguous');
-    expect(prompt).toContain('timeofday');
-    expect(prompt).toContain('preferpreviousdoctor');
-    expect(prompt).toContain('prefernearby');
-    expect(prompt).toContain('never diagnose');
-    expect(prompt).toContain('does not triage');
-  });
 
   test('chat prompt binds direct lookup to one selected record and requires the exact broad refusal', () => {
     expect(CHAT_SYSTEM_PROMPT.toLowerCase()).toContain('never diagnose');

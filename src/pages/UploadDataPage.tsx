@@ -169,11 +169,11 @@ function checkBotsUploaded(medplum: MedplumClient): boolean {
       [
         'block-availability',
         'reschedule-appointment',
-        'agent-intake',
         'agent-find-doctors',
         'agent-ensure-doctor',
         'agent-book-appointment',
         'agent-patient-chat',
+        'agent-booking-chat',
       ].includes(bot.name)
   );
 
