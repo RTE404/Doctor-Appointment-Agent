@@ -78,6 +78,29 @@ export function PatientHistoryPage(): JSX.Element {
 
   const selectedOption = agentState?.selectedOption;
 
+  // The most recently rendered `agent-options` turn can go stale: `slotTaken`
+  // filters `agentState.options` (the authoritative list) but the `turns`
+  // entry still holds the original list from when options first arrived.
+  // Only the last turn is ever interactively relevant, so resync it against
+  // `agentState.options` at render time rather than mutating chat history.
+  // If filtering leaves nothing to book, swap it for a question turn so the
+  // patient regains the chat input instead of hitting a dead end.
+  const displayTurns = ((): BookingChatTurn[] => {
+    const lastIndex = turns.length - 1;
+    const lastTurn = turns[lastIndex];
+    if (!agentState || !lastTurn || lastTurn.kind !== 'agent-options') {
+      return turns;
+    }
+    if (agentState.options.length === 0) {
+      const noOptionsLeft: BookingChatTurn = {
+        kind: 'agent-question',
+        text: "That appointment was just taken and there are no other matching options. Please describe what you're looking for and I'll search again.",
+      };
+      return [...turns.slice(0, lastIndex), noOptionsLeft];
+    }
+    return [...turns.slice(0, lastIndex), { ...lastTurn, options: agentState.options }];
+  })();
+
   return (
     <Document width={800}>
       <Stack>
@@ -100,7 +123,7 @@ export function PatientHistoryPage(): JSX.Element {
           </Card>
         )}
         {agentState?.phase !== 'confirming' && agentState?.phase !== 'booking' && (
-          <BookingChat turns={turns} onSend={handleSend} sending={sending} onSelectOption={handleSelectOption} />
+          <BookingChat turns={displayTurns} onSend={handleSend} sending={sending} onSelectOption={handleSelectOption} />
         )}
       </Stack>
     </Document>

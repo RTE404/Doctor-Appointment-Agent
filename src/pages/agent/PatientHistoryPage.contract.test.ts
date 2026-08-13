@@ -22,4 +22,17 @@ describe('PatientHistoryPage concierge contract', () => {
     expect(source.match(/'agent-book-appointment'/g)).toHaveLength(1);
     expect(source).toContain('confirmSelectedOption(agentState');
   });
+
+  test('keeps the rendered option list in sync with slotTaken filtering instead of the stale chat turn', async () => {
+    const source = await patientHistorySource();
+
+    // BookingChat must be fed the resynced turn list, not the raw `turns` state directly,
+    // so a slotTaken filter of agentState.options is reflected in what the patient sees.
+    expect(source).toContain('turns={displayTurns}');
+    expect(source).not.toContain('turns={turns}');
+    // The last agent-options turn is rebuilt from the authoritative, filtered agentState.options.
+    expect(source).toContain('options: agentState.options');
+    // An empty remaining-options list must give the patient a way to continue rather than a dead end.
+    expect(source).toContain('agentState.options.length === 0');
+  });
 });
