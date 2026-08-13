@@ -2346,7 +2346,23 @@ git commit -m "feat: wire BookingChat into PatientHistoryPage, replacing the sin
 - Modify: `src/bots/agent/lib/prompts.ts`, `src/bots/agent/lib/prompts.test.ts`
 - Modify: `src/bots/agent/lib/schedulingPreferences.ts` usage check (delete if now unused — see Step 4)
 
-- [ ] **Step 1: Delete the replaced bot files and form**
+- [ ] **Step 1: Preserve any pre-existing uncommitted edits on the two intake files, then delete**
+
+Before touching these two files, check whether either already has uncommitted changes from outside this plan:
+
+```bash
+git status --short src/bots/agent/agent-intake.ts src/bots/agent/agent-intake.test.ts
+```
+
+If that prints anything, those are pre-existing edits unrelated to this plan. Commit them as-is first, in their own
+commit, so nothing is lost when the files are deleted next:
+
+```bash
+git add src/bots/agent/agent-intake.ts src/bots/agent/agent-intake.test.ts
+git commit -m "chore: snapshot pre-existing agent-intake edits before removal"
+```
+
+If `git status --short` printed nothing, skip straight to deleting. Either way, now delete:
 
 ```bash
 git rm src/bots/agent/agent-intake.ts src/bots/agent/agent-intake.test.ts
@@ -2423,10 +2439,18 @@ exercises the real Gemini call end-to-end — the one path the earlier automated
 
 - [ ] **Step 8: Commit**
 
+This repo may have unrelated pre-existing uncommitted changes from outside this plan (check with `git status --short`
+first). Do not use `git add -A` here — stage only this task's own files by exact path:
+
 ```bash
-git add -A
+git add api/execute.ts api/execute.test.ts src/scripts/deploy-bots.ts \
+  src/bots/agent/lib/prompts.ts src/bots/agent/lib/prompts.test.ts
+# Only if Step 4 also removed normalizeSchedulingPreferences:
+git add src/bots/agent/lib/schedulingPreferences.ts src/bots/agent/lib/schedulingPreferences.test.ts
 git commit -m "refactor: remove agent-intake and agent-find-bookable-options, now replaced by agent-booking-chat"
 ```
+
+(The deletions from Step 1 are already staged from `git rm` and will be included automatically.)
 
 ---
 
