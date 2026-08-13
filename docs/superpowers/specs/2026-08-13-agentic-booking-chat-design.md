@@ -67,7 +67,9 @@ agent-booking-chat bot
     v
 Response: either
   { kind: 'question', reply, sessionId }                          -> chat continues
-  { kind: 'options', options: BookableOption[], sessionId }       -> hand off to existing selection/confirm UI
+  { kind: 'options', options: BookableOption[], sessionId }       -> hand off to selection/confirm UI; sessionId
+                                                                      stays live, so the patient can keep chatting to
+                                                                      refine instead of picking a card
   { kind: 'error', reply, sessionId }                             -> chat shows the problem, patient can keep typing
 
 Existing, unchanged from here down:
@@ -116,9 +118,13 @@ export type BookingChatResult =
 - **With `sessionId`**: read the `Communication`, verify `subject.reference === Patient/${patientId}` and
   `status === 'in-progress'` (reject otherwise — same "this artifact must actually belong to this patient/session"
   posture as `agent-book-appointment`'s summary check), append the new patient message, run the loop.
-- **Terminal states**: `propose_options` succeeding sets `status: 'completed'`. A step-cap or unrecoverable error also
-  ends the session (`status: 'stopped'`) — a stopped session cannot be resumed; the patient must start over (surfaced
-  in the UI as "let's start again").
+- **`propose_options` succeeding does not end the session.** It leaves `status: 'in-progress'`, same as a clarifying
+  question — the patient can send another message (e.g. "none of those work, try afternoons") and the loop resumes
+  with the full prior transcript, including every search and availability check already gathered, so the model isn't
+  starting from zero. The system prompt tells the model to treat a post-`propose_options` message as feedback on the
+  options just shown rather than an unrelated new request.
+- **Terminal states**: only a step-cap or unrecoverable error ends a session (`status: 'stopped'`) — a stopped
+  session cannot be resumed; the patient must start over (surfaced in the UI as "let's start again").
 
 ### Tools
 
@@ -168,7 +174,7 @@ function runTurn(session, patientMessage):
       if call.name == 'propose_options':
         result = handlePropose(session, call.args)  # validation + grounding, see below
         if result.ok:
-          persist(session, transcript + [toolResultMessage(call, result)], status: 'completed')
+          persist(session, transcript + [toolResultMessage(call, result)], status: 'in-progress')
           return {kind: 'options', options: result.options}
         else:
           # invalid/ungrounded — tell the model why, let it try again within the step budget
