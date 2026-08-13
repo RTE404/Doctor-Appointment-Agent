@@ -235,6 +235,13 @@ describe('booking chat prompts', () => {
     expect(prompt).toContain('ask_clarifying_question');
   });
 
+  test('system prompt tells the model a message after propose_options is feedback on those options, not a fresh start', () => {
+    const prompt = BOOKING_CHAT_SYSTEM_PROMPT.toLowerCase();
+    expect(prompt).toContain('propose_options');
+    expect(prompt).toContain('after you have already called propose_options');
+    expect(prompt).toContain('feedback on those options');
+  });
+
   test('system prompt grounds the specialty vocabulary: every supported label and its exact NUCC code', () => {
     // The search tools require an exact NUCC code and propose_options requires
     // a label normalizeLlmSpecialty accepts. Without the table in the prompt
