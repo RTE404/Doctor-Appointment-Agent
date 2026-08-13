@@ -97,8 +97,8 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
     throw new Error('The intake Communication is not an authoritative preparation summary for this Patient');
   }
   // Device id is server-assigned (seeded via POST + ifNoneExist), never a
-  // literal — resolved the same way agent-intake.ts resolves it when it
-  // writes this same sender field.
+  // literal — resolved the same way agent-booking-chat.ts resolves it when
+  // it writes this same sender field onto the pre-visit summary.
   const agentDevice = await medplum.searchOne('Device', {
     identifier: 'http://example.com/agent-config|ai-appointment-agent',
   });

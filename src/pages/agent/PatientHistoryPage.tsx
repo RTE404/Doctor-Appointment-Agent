@@ -15,7 +15,7 @@ import type { BookingChatTurn } from '../../components/agent/bookingChatModel';
 import { EncounterHistoryList } from '../../components/agent/EncounterHistoryList';
 import { executeAction } from '../../api/executeAction';
 import { confirmSelectedOption } from './bookingAgentController';
-import { optionSelected, optionsReceived } from './bookingAgentModel';
+import { optionSelected, optionsReceived, resolveNextSessionId } from './bookingAgentModel';
 import type { BookingAgentState, BookingInProgressState } from './bookingAgentModel';
 
 export function PatientHistoryPage(): JSX.Element {
@@ -35,7 +35,7 @@ export function PatientHistoryPage(): JSX.Element {
     try {
       const input: BookingChatInput = { patientId: patientId as string, message, sessionId };
       const result = await executeAction<BookingChatInput, BookingChatResult>(medplum, 'agent-booking-chat', input);
-      setSessionId(result.sessionId);
+      setSessionId(resolveNextSessionId(result));
       if (result.kind === 'question' || result.kind === 'error') {
         setTurns((previous) => [...previous, { kind: 'agent-question', text: result.reply }]);
       } else {

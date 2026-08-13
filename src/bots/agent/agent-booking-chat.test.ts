@@ -4,6 +4,8 @@ import type { BotEvent } from '@medplum/core';
 import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
 import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
+import { handler as bookAppointmentHandler } from './agent-book-appointment';
+import type { BookInput, BookResult } from './agent-book-appointment';
 import { __setGeminiToolCallerForTests, handler } from './agent-booking-chat';
 import type { BookingChatInput } from './agent-booking-chat';
 import type { BookingToolCall } from './lib/bookingSession';
@@ -250,6 +252,131 @@ describe('agent-booking-chat handler', () => {
     expect(summary.topic?.coding?.[0]).toMatchObject({ code: '208D00000X' });
     const session = await medplum.readResource('Communication', result.sessionId);
     expect(session.status).toBe('completed');
+  });
+
+  // Exercises the real seam between the two bots: agent-booking-chat's actual
+  // options/summary output fed straight into agent-book-appointment's real
+  // handler on the same MockClient, not each bot re-tested in isolation.
+  test('agent-book-appointment books the exact option and summary agent-booking-chat produced', async () => {
+    const medplum = new MockClient();
+    const { patientId } = await seedFixtures(medplum);
+    await seedPreviousPhysician(medplum, patientId, '1000000001');
+    const availability = { start: '2026-08-14T13:00:00.000Z', end: '2026-08-14T13:30:00.000Z' };
+
+    let call = 0;
+    __setGeminiToolCallerForTests(async () => {
+      call += 1;
+      if (call === 1) {
+        return assistantToolCalls([searchPreviousPhysicianCall('call-0')]);
+      }
+      if (call === 2) {
+        return assistantToolCalls([checkAvailabilityCall('call-1', '1000000001')]);
+      }
+      return {
+        message: {
+          role: 'assistant' as const,
+          content: null,
+          tool_calls: [
+            {
+              id: 'call-2',
+              type: 'function' as const,
+              function: {
+                name: 'propose_options',
+                arguments: JSON.stringify({
+                  specialty: 'General Practice',
+                  reason: 'Routine visit',
+                  summary: 'Patient requests a routine visit.',
+                  picks: [{ npi: '1000000001', start: availability.start, end: availability.end, reasoning: 'earliest' }],
+                }),
+              },
+            },
+          ],
+        },
+      };
+    });
+
+    // Same MockClient instance for both handlers below, so the
+    // Practitioner/PractitionerRole/Schedule/Device provisioned during the
+    // chat loop are still there for agent-book-appointment to re-read. The
+    // $find stub resolves the Practitioner from the requested Schedule
+    // rather than hardcoding an id, so it satisfies both callers:
+    // check_availability (which only reads start/end) and
+    // agent-book-appointment's stricter validateProposal (which requires a
+    // matching participant and a contained Slot).
+    const originalGet = medplum.get.bind(medplum);
+    medplum.get = (async (url: string | URL, options?: unknown) => {
+      const asUrl = typeof url === 'string' ? new URL(url) : url;
+      if (asUrl.pathname.includes('$find')) {
+        const scheduleId = asUrl.searchParams.get('schedule')?.split('/')[1];
+        const schedule = scheduleId ? await medplum.readResource('Schedule', scheduleId) : undefined;
+        const practitionerRef = schedule?.actor?.find((actor) => actor.reference?.startsWith('Practitioner/'))?.reference;
+        return {
+          resourceType: 'Bundle',
+          type: 'searchset',
+          entry: [
+            {
+              resource: {
+                resourceType: 'Appointment',
+                status: 'proposed',
+                start: availability.start,
+                end: availability.end,
+                participant: practitionerRef ? [{ actor: { reference: practitionerRef }, status: 'accepted' }] : [],
+                contained: scheduleId
+                  ? [
+                      {
+                        resourceType: 'Slot',
+                        id: 'slot-1',
+                        status: 'free',
+                        schedule: { reference: `Schedule/${scheduleId}` },
+                        start: availability.start,
+                        end: availability.end,
+                      },
+                    ]
+                  : [],
+              },
+            },
+          ],
+        };
+      }
+      return originalGet(url as never, options as never);
+    }) as typeof medplum.get;
+
+    const originalPost = medplum.post.bind(medplum);
+    // Same ReadablePromise-vs-Promise workaround as agent-book-appointment.test.ts's
+    // own $book stub: an async mock is structurally incompatible with medplum.post's
+    // real return type, so it's cast to `any`.
+    vi.spyOn(medplum, 'post').mockImplementation((async (url: string | URL, body?: any) => {
+      if (url.toString() === medplum.fhirUrl('Appointment', '$book').toString()) {
+        const proposedAppointment = body?.parameter?.find((p: { name: string }) => p.name === 'appointment')?.resource;
+        const bookedAppointment = { ...proposedAppointment, id: 'booked-appt-1', status: 'booked' };
+        return { resourceType: 'Bundle', type: 'transaction-response', entry: [{ resource: bookedAppointment }] };
+      }
+      return originalPost(url as any, body);
+    }) as any);
+
+    const chatResult = await handler(medplum, event({ patientId, message: 'Find me a doctor' }));
+    expect(chatResult.kind).toBe('options');
+    if (chatResult.kind !== 'options') throw new Error('expected options');
+    const option = chatResult.options[0];
+
+    const bookInput: BookInput = {
+      patientId,
+      practitionerId: option.practitionerId,
+      scheduleId: option.scheduleId,
+      start: option.start,
+      end: option.end,
+      summaryCommunicationId: chatResult.summaryCommunicationId,
+    };
+    const bookResult: BookResult = await bookAppointmentHandler(medplum, {
+      bot: { identifier: { system: 'http://example.com', value: 'agent-book-appointment' } },
+      contentType: 'application/json',
+      input: bookInput,
+      secrets: {},
+    });
+
+    expect(bookResult.ok).toBe(true);
+    if (!bookResult.ok) throw new Error(`expected booking to succeed, got reason: ${bookResult.reason}`);
+    expect(bookResult.appointment.participant).toContainEqual({ actor: { reference: `Patient/${patientId}` }, status: 'accepted' });
   });
 
   test('a single response with multiple tool_calls persists a tool-result message for every call, including {skipped:true} for calls after an early-return tool', async () => {

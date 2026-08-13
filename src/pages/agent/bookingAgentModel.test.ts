@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
+import type { BookingChatResult } from '../../bots/agent/agent-booking-chat';
 import type { BookableOption } from '../../bots/agent/lib/bookableOptions';
-import { bookingStarted, optionSelected, optionsReceived, slotTaken } from './bookingAgentModel';
+import { bookingStarted, optionSelected, optionsReceived, resolveNextSessionId, slotTaken } from './bookingAgentModel';
 
 function option(id: string): BookableOption {
   return {
@@ -56,5 +57,27 @@ describe('bookingAgentModel', () => {
     expect(recovered.options.map(({ id }) => id)).toEqual(['one', 'three']);
     expect(recovered.selectedOption).toBeUndefined();
     expect(recovered.slotTaken).toBe(true);
+  });
+
+  describe('resolveNextSessionId', () => {
+    test('a question result keeps the session resumable', () => {
+      const result: BookingChatResult = { kind: 'question', sessionId: 'session-1', reply: 'Which body part hurts?' };
+      expect(resolveNextSessionId(result)).toBe('session-1');
+    });
+
+    test('an options result clears the session id, since the session is already completed server-side', () => {
+      const result: BookingChatResult = {
+        kind: 'options',
+        sessionId: 'session-1',
+        options: [option('one')],
+        summaryCommunicationId: 'summary-1',
+      };
+      expect(resolveNextSessionId(result)).toBeUndefined();
+    });
+
+    test('an error result clears the session id, since the session is already stopped server-side', () => {
+      const result: BookingChatResult = { kind: 'error', sessionId: 'session-1', reply: "let's start again" };
+      expect(resolveNextSessionId(result)).toBeUndefined();
+    });
   });
 });
