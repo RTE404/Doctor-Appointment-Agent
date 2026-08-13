@@ -4,7 +4,7 @@ import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@med
 import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
 import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
-import { handler, __setNppesSearcherForTests } from './agent-find-doctors';
+import { handler, __setNppesSearcherForTests, findPreviousPhysician } from './agent-find-doctors';
 
 // A bare MockClient only indexes ~24 hand-picked search parameters — none
 // for Encounter.subject or PractitionerRole.practitioner/specialty, which
@@ -17,6 +17,10 @@ beforeAll(() => {
   for (const filename of SEARCH_PARAMETER_BUNDLE_FILES) {
     indexSearchParameterBundle(readJson(filename) as Bundle<SearchParameter>);
   }
+});
+
+test('exports findPreviousPhysician for reuse by the booking chat tools', () => {
+  expect(typeof findPreviousPhysician).toBe('function');
 });
 
 describe('agent-find-doctors handler', () => {

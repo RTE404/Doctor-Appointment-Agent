@@ -47,7 +47,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<FindDoctor
   return { candidates: previous ? [previous, ...nppesCandidates] : nppesCandidates };
 }
 
-async function findPreviousPhysician(
+export async function findPreviousPhysician(
   medplum: MedplumClient,
   patientId: string,
   specialtyCode: string
