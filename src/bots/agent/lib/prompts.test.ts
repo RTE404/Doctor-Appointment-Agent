@@ -10,6 +10,7 @@ import type {
   Practitioner,
 } from '@medplum/fhirtypes';
 import { describe, expect, test } from 'vitest';
+import { SPECIALTY_TABLE, normalizeLlmSpecialty } from '../../../config/specialties';
 import { BOOKING_CHAT_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, buildChatUserPrompt, buildPatientContextMessage, containsInterpretationLanguage } from './prompts';
 
 describe('buildChatUserPrompt', () => {
@@ -232,6 +233,26 @@ describe('booking chat prompts', () => {
     expect(prompt).toContain('check_availability');
     expect(prompt).toContain('propose_options');
     expect(prompt).toContain('ask_clarifying_question');
+  });
+
+  test('system prompt grounds the specialty vocabulary: every supported label and its exact NUCC code', () => {
+    // The search tools require an exact NUCC code and propose_options requires
+    // a label normalizeLlmSpecialty accepts. Without the table in the prompt
+    // the model has to recall both from training data, and a wrong code makes
+    // search_nppes fail with no usable signal.
+    for (const specialty of SPECIALTY_TABLE) {
+      expect(BOOKING_CHAT_SYSTEM_PROMPT).toContain(specialty.label);
+      expect(BOOKING_CHAT_SYSTEM_PROMPT).toContain(specialty.nuccCode);
+    }
+  });
+
+  test('every label listed in the system prompt round-trips through normalizeLlmSpecialty', () => {
+    // Guards the two-vocabulary trap: propose_options takes labels, the search
+    // tools take codes, and the prompt must never advertise a label the
+    // validator would reject.
+    for (const specialty of SPECIALTY_TABLE) {
+      expect(normalizeLlmSpecialty(specialty.label)?.nuccCode).toBe(specialty.nuccCode);
+    }
   });
 
   test('buildPatientContextMessage summarizes conditions, medications, and allergies', () => {
