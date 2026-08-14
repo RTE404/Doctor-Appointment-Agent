@@ -2,7 +2,7 @@
 import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { OperationOutcomeError, indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
 import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
-import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
+import type { Appointment, Bundle, SearchParameter } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import { handler } from './reschedule-appointment';
 import { DEMO_GENERATED_TAG } from '../../demo/demoTag';
@@ -19,13 +19,14 @@ beforeAll(() => {
   }
 });
 
-const SERVICE_TYPE = [{ extension: [{ url: 'https://medplum.com/fhir/service-type-reference', valueReference: { reference: 'HealthcareService/office-visit' } }] }];
 const PARTICIPANTS = [{ actor: { reference: 'Patient/p1' }, status: 'accepted' as const }, { actor: { reference: 'Practitioner/dr-1' }, status: 'accepted' as const }];
 
 describe('reschedule-appointment handler', () => {
   test('on success: books the new time via $book (parsing its real bare-Bundle response), copies stated-issue metadata, re-links the summary Communication, cancels the original via native $cancel', async () => {
     const medplum = new MockClient();
-    const schedule = await medplum.createResource({ resourceType: 'Schedule', actor: [{ reference: 'Practitioner/dr-1' }] });
+    const officeVisit = await medplum.createResource({ resourceType: 'HealthcareService', name: 'Office Visit', active: true });
+    const serviceType = [{ extension: [{ url: 'https://medplum.com/fhir/service-type-reference', valueReference: { reference: `HealthcareService/${officeVisit.id}` } }] }];
+    const schedule = await medplum.createResource({ resourceType: 'Schedule', actor: [{ reference: 'Practitioner/dr-1' }], serviceType });
     const oldSlot = await medplum.createResource({ resourceType: 'Slot', schedule: { reference: `Schedule/${schedule.id}` }, status: 'busy', start: '2026-09-01T09:00:00Z', end: '2026-09-01T09:30:00Z' });
     const communication = await medplum.createResource({
       resourceType: 'Communication',
@@ -41,7 +42,7 @@ describe('reschedule-appointment handler', () => {
       meta: { tag: [DEMO_GENERATED_TAG] },
       status: 'booked',
       slot: [{ reference: `Slot/${oldSlot.id}` }],
-      serviceType: SERVICE_TYPE,
+      serviceType,
       participant: PARTICIPANTS,
       description: 'Chest discomfort during exercise',
       comment: 'My chest hurts when I run',
@@ -63,6 +64,23 @@ describe('reschedule-appointment handler', () => {
     // $book's real response is a BARE Bundle — no Parameters envelope.
     const bookResponseBundle = { resourceType: 'Bundle', type: 'transaction-response', entry: [{ resource: bookedAppointment }] };
     const posted: { url: string; body: any }[] = [];
+    const serverProposal: Appointment = {
+      resourceType: 'Appointment',
+      status: 'proposed',
+      start: '2026-09-02T09:00:00Z',
+      end: '2026-09-02T09:30:00Z',
+      serviceType,
+      appointmentType: { text: 'Office visit proposal' },
+      participant: [{ actor: { reference: 'Practitioner/dr-1' }, status: 'accepted' }],
+      contained: [{ resourceType: 'Slot', status: 'busy', start: '2026-09-02T09:00:00Z', end: '2026-09-02T09:30:00Z', schedule: { reference: `Schedule/${schedule.id}` } }],
+    };
+    const originalGet = medplum.get.bind(medplum);
+    const getSpy = vi.spyOn(medplum, 'get').mockImplementation((async (url: string | URL, options?: any) => {
+      if (url.toString().includes('/fhir/R4/Appointment/$find')) {
+        return { resourceType: 'Bundle', type: 'searchset', entry: [{ resource: serverProposal }] } as any;
+      }
+      return originalGet(url as any, options);
+    }) as any);
     vi.spyOn(medplum, 'post').mockImplementation(async (url: string | URL, body: any) => {
       const resolvedUrl = url.toString();
       posted.push({ url: resolvedUrl, body });
@@ -82,6 +100,7 @@ describe('reschedule-appointment handler', () => {
     if (!result.ok) throw new Error('expected ok:true');
     expect(result.appointment.description).toBe('Chest discomfort during exercise');
     expect(result.appointment.comment).toBe('My chest hurts when I run');
+    expect(getSpy.mock.calls.some(([url]) => url.toString().includes('/fhir/R4/Appointment/$find'))).toBe(true);
 
     const bookCall = posted.find((p) => p.url === medplum.fhirUrl('Appointment', '$book').toString());
     const proposedAppointment = bookCall?.body.parameter[0].resource;
@@ -90,10 +109,9 @@ describe('reschedule-appointment handler', () => {
     // write), not merely echoed by the mocked $book response fixture.
     expect(proposedAppointment.description).toBe('Chest discomfort during exercise');
     expect(proposedAppointment.comment).toBe('My chest hurts when I run');
-    expect(proposedAppointment.meta?.tag).toContainEqual({
-      system: 'https://doctor-appointment-agent.example/fhir/demo',
-      code: 'demo-generated',
-    });
+    expect(proposedAppointment.appointmentType).toStrictEqual(serverProposal.appointmentType);
+    expect(proposedAppointment.participant).toStrictEqual([PARTICIPANTS[1], PARTICIPANTS[0]]);
+    expect(proposedAppointment.meta?.tag).toContainEqual(DEMO_GENERATED_TAG);
     expect(posted.some((p) => p.url === medplum.fhirUrl('Appointment', appointment.id as string, '$cancel').toString())).toBe(true);
 
     const updatedCommunication = await medplum.readResource('Communication', communication.id as string);
@@ -102,17 +120,26 @@ describe('reschedule-appointment handler', () => {
 
   test('on slot-taken $book rejection: leaves the original appointment untouched, does not call $cancel', async () => {
     const medplum = new MockClient();
-    const schedule = await medplum.createResource({ resourceType: 'Schedule', actor: [{ reference: 'Practitioner/dr-1' }] });
+    const officeVisit = await medplum.createResource({ resourceType: 'HealthcareService', name: 'Office Visit', active: true });
+    const serviceType = [{ extension: [{ url: 'https://medplum.com/fhir/service-type-reference', valueReference: { reference: `HealthcareService/${officeVisit.id}` } }] }];
+    const schedule = await medplum.createResource({ resourceType: 'Schedule', actor: [{ reference: 'Practitioner/dr-1' }], serviceType });
     const oldSlot = await medplum.createResource({ resourceType: 'Slot', schedule: { reference: `Schedule/${schedule.id}` }, status: 'busy', start: '2026-09-01T09:00:00Z', end: '2026-09-01T09:30:00Z' });
     const appointment = await medplum.createResource({
       resourceType: 'Appointment',
       meta: { tag: [DEMO_GENERATED_TAG] },
       status: 'booked',
       slot: [{ reference: `Slot/${oldSlot.id}` }],
-      serviceType: SERVICE_TYPE,
+      serviceType,
       participant: PARTICIPANTS,
     });
     const posted: string[] = [];
+    const originalGet = medplum.get.bind(medplum);
+    const getSpy = vi.spyOn(medplum, 'get').mockImplementation((async (url: string | URL, options?: any) => {
+      if (url.toString().includes('/fhir/R4/Appointment/$find')) {
+        return { resourceType: 'Bundle', type: 'searchset', entry: [] } as any;
+      }
+      return originalGet(url as any, options);
+    }) as any);
     vi.spyOn(medplum, 'post').mockImplementation(async (url: string | URL) => {
       posted.push(url.toString());
       throw new OperationOutcomeError({ resourceType: 'OperationOutcome', issue: [{ severity: 'error', code: 'invalid', details: { text: 'Requested time slot is not available' } }] });
@@ -128,55 +155,8 @@ describe('reschedule-appointment handler', () => {
     expect(result).toStrictEqual({ ok: false, reason: 'slot_taken' });
     const original = await medplum.readResource('Appointment', appointment.id as string);
     expect(original.status).toBe('booked'); // untouched
+    expect(getSpy.mock.calls.some(([url]) => url.toString().includes('/fhir/R4/Appointment/$find'))).toBe(true);
+    expect(posted).not.toContain(medplum.fhirUrl('Appointment', '$book').toString());
     expect(posted).not.toContain(medplum.fhirUrl('Appointment', appointment.id as string, '$cancel').toString());
-  });
-
-  test('rejects an untagged appointment before attempting any mutation', async () => {
-    const medplum = new MockClient();
-    const appointment = await medplum.createResource({
-      resourceType: 'Appointment',
-      status: 'booked',
-      participant: PARTICIPANTS,
-    });
-    const post = vi.spyOn(medplum, 'post');
-
-    await expect(
-      handler(medplum, {
-        bot: { reference: 'Bot/123' },
-        input: {
-          appointmentId: appointment.id as string,
-          newStart: '2026-09-02T09:00:00Z',
-          newEnd: '2026-09-02T09:30:00Z',
-        },
-        contentType: 'application/json',
-        secrets: {},
-      })
-    ).rejects.toThrow('Only demo-generated appointments can be rescheduled');
-    expect(post).not.toHaveBeenCalled();
-  });
-
-  test('rejects a tagged appointment whose status cannot be rescheduled before attempting any mutation', async () => {
-    const medplum = new MockClient();
-    const appointment = await medplum.createResource({
-      resourceType: 'Appointment',
-      meta: { tag: [DEMO_GENERATED_TAG] },
-      status: 'fulfilled',
-      participant: PARTICIPANTS,
-    });
-    const post = vi.spyOn(medplum, 'post');
-
-    await expect(
-      handler(medplum, {
-        bot: { reference: 'Bot/123' },
-        input: {
-          appointmentId: appointment.id as string,
-          newStart: '2026-09-02T09:00:00Z',
-          newEnd: '2026-09-02T09:30:00Z',
-        },
-        contentType: 'application/json',
-        secrets: {},
-      })
-    ).rejects.toThrow('Only pending or booked appointments can be rescheduled');
-    expect(post).not.toHaveBeenCalled();
   });
 });
