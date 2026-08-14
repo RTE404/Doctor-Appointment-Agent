@@ -1,5 +1,5 @@
 // src/bots/agent/agent-patient-chat.test.ts
-import { afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { vi as fixtureVi } from 'vitest';
 import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
 import { ReadablePromise } from '@medplum/core';
@@ -8,6 +8,7 @@ import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
 import type { Patient } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import { handler, __setGeminiCallerForTests } from './agent-patient-chat';
+
 function stubPatientEverything(medplum: MockClient, patient: Patient): void {
   const everything: Bundle = {
     resourceType: 'Bundle',
@@ -36,7 +37,7 @@ beforeAll(() => {
 });
 
 afterEach(() => {
-  fixtureVi.unstubAllGlobals();
+  vi.unstubAllGlobals();
 });
 
 describe('agent-patient-chat handler', () => {
@@ -78,7 +79,7 @@ describe('agent-patient-chat handler', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(request.body as string) as Record<string, unknown>;
-    expect(body).toMatchObject({ model: 'gemini-3.1-flash-lite' });
+    expect(body).toMatchObject({ model: 'gemini-3.5-flash-lite' });
     expect(body).not.toHaveProperty('response_format');
   });
 

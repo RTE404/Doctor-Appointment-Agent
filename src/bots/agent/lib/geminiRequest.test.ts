@@ -2,11 +2,11 @@ import { describe, expect, test } from 'vitest';
 import { buildGeminiChatCompletionBody } from './geminiRequest';
 
 describe('buildGeminiChatCompletionBody', () => {
-  test('uses Gemini 3.1 Flash-Lite without sampling parameters', () => {
+  test('uses Gemini 3.5 Flash-Lite without sampling parameters', () => {
     const body = buildGeminiChatCompletionBody('system prompt', 'user prompt');
 
     expect(body).toStrictEqual({
-      model: 'gemini-3.1-flash-lite',
+      model: 'gemini-3.5-flash-lite',
       messages: [
         { role: 'system', content: 'system prompt' },
         { role: 'user', content: 'user prompt' },
@@ -21,7 +21,7 @@ describe('buildGeminiChatCompletionBody', () => {
     const body = buildGeminiChatCompletionBody('system prompt', 'user prompt', { jsonResponse: true });
 
     expect(body).toStrictEqual({
-      model: 'gemini-3.1-flash-lite',
+      model: 'gemini-3.5-flash-lite',
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: 'system prompt' },
