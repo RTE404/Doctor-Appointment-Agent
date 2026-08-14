@@ -56,4 +56,59 @@ describe('loadPatientClinicalContext', () => {
     expect(context.allergies).toHaveLength(1);
     expect(context.encounters).toHaveLength(1);
   });
+
+  test('resolves each encounter to its practitioner name, specialty, and organization name', async () => {
+    const medplum = new MockClient();
+    const patient = await medplum.createResource({ resourceType: 'Patient', name: [{ given: ['Test'], family: 'Patient' }] });
+    const practitioner = await medplum.createResource({
+      resourceType: 'Practitioner',
+      name: [{ given: ['Jane'], family: 'Doe' }],
+    });
+    await medplum.createResource({
+      resourceType: 'PractitionerRole',
+      practitioner: { reference: `Practitioner/${practitioner.id}` },
+      specialty: [{ coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X', display: 'Cardiology' }] }],
+    });
+    const organization = await medplum.createResource({ resourceType: 'Organization', name: 'Central Clinic' });
+    await medplum.createResource({
+      resourceType: 'Encounter',
+      status: 'finished',
+      class: { code: 'AMB' },
+      subject: { reference: `Patient/${patient.id}` },
+      participant: [{ individual: { reference: `Practitioner/${practitioner.id}` } }],
+      serviceProvider: { reference: `Organization/${organization.id}` },
+      period: { start: '2026-01-01T10:00:00.000Z' },
+    });
+
+    const context = await loadPatientClinicalContext(medplum, patient.id as string);
+
+    expect(context.encounterSummaries).toHaveLength(1);
+    expect(context.encounterSummaries[0]).toMatchObject({
+      date: '2026-01-01',
+      practitionerName: 'Dr. Jane Doe',
+      specialty: 'Cardiology',
+      organizationName: 'Central Clinic',
+    });
+  });
+
+  test('falls back to "Unknown" fields for an encounter missing practitioner or organization data', async () => {
+    const medplum = new MockClient();
+    const patient = await medplum.createResource({ resourceType: 'Patient', name: [{ given: ['Test'], family: 'Patient' }] });
+    await medplum.createResource({
+      resourceType: 'Encounter',
+      status: 'finished',
+      class: { code: 'AMB' },
+      subject: { reference: `Patient/${patient.id}` },
+    });
+
+    const context = await loadPatientClinicalContext(medplum, patient.id as string);
+
+    expect(context.encounterSummaries).toHaveLength(1);
+    expect(context.encounterSummaries[0]).toMatchObject({
+      date: 'Unknown date',
+      practitionerName: 'Unknown',
+      specialty: 'Unknown specialty',
+      organizationName: 'Unknown organization',
+    });
+  });
 });
