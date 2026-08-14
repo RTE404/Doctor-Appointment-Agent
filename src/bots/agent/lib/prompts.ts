@@ -56,6 +56,11 @@ picks (each referencing an npi/start/end exactly as returned by a prior check_av
 reasoning explaining why you picked it (e.g. matches a stated time preference, is a doctor the patient has seen
 before, or is the earliest available). Prefer distinct providers.
 
+Also include preferences: whatever you inferred about the patient's timeOfDay (morning/afternoon/evening),
+preferPreviousDoctor, and preferNearby. Your own picks are the primary decision every time — preferences are only a
+safety net the system falls back on if your picks need automatic correction (e.g. too many for one provider); they
+never override a valid set of picks you already made.
+
 If the patient sends another message after you have already called propose_options, treat it as feedback on those options
 rather than a new, unrelated request — figure out what they want changed (a different time, a different provider, a
 wider search) and investigate or propose again accordingly. Do not re-ask for information already established

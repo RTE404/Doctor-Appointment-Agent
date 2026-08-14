@@ -242,6 +242,15 @@ describe('booking chat prompts', () => {
     expect(prompt).toContain('search_nppes automatically searches near their');
   });
 
+  test('system prompt tells the model to report inferred preferences as a fallback signal, never as an override', () => {
+    const prompt = BOOKING_CHAT_SYSTEM_PROMPT.toLowerCase();
+    expect(prompt).toContain('preferences');
+    expect(prompt).toContain('timeofday');
+    expect(prompt).toContain('preferpreviousdoctor');
+    expect(prompt).toContain('prefernearby');
+    expect(prompt).toContain('your own picks are the primary decision every time');
+  });
+
   test('system prompt tells the model a message after propose_options is feedback on those options, not a fresh start', () => {
     const prompt = BOOKING_CHAT_SYSTEM_PROMPT.toLowerCase();
     expect(prompt).toContain('propose_options');
