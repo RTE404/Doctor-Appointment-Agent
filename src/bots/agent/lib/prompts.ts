@@ -38,6 +38,11 @@ supported scheduling specialty from the list above. Use General Practice (208D00
 specialty preference and no clear specialist request. If the complaint is genuinely ambiguous, call
 ask_clarifying_question instead of guessing.
 
+The patient context message above already includes everything on file for this patient: name, address, phone,
+conditions, medications, allergies, and past encounters. Never ask the patient for information already shown there.
+In particular, never ask for their zip code or city before searching — search_nppes automatically searches near their
+address on file. Only mention location to the patient if that context shows no address on file at all.
+
 Investigate before proposing: call search_previous_physician and/or search_nppes to find candidate providers, then
 call check_availability for specific candidates (by NPI) to find real bookable times. You may only call
 check_availability with an NPI that a search_previous_physician or search_nppes result in this conversation
@@ -61,13 +66,38 @@ any way — this system books a single, undifferentiated visit type; it does not
 what is asked.`;
 
 export function buildPatientContextMessage(context: PatientClinicalContext): string {
+  const name = formatPatientName(context.patient) || 'not recorded';
+  const address = formatPatientAddress(context.patient) || 'not recorded';
+  const phone = context.patient.telecom?.find((t) => t.system === 'phone')?.value || 'not recorded';
   const conditions = context.conditions.map((c) => c.code?.text).filter(Boolean).join(', ') || 'none recorded';
   const medications = context.medications.map((m) => m.medicationCodeableConcept?.text).filter(Boolean).join(', ') || 'none recorded';
   const allergies = context.allergies.map((a) => a.code?.text).filter(Boolean).join(', ') || 'none recorded';
+  const encounters =
+    context.encounterSummaries
+      .map((e) => `${e.date} with ${e.practitionerName} (${e.specialty}) at ${e.organizationName}`)
+      .join('; ') || 'none recorded';
   return `Patient history:
+- Name: ${name}
+- Address: ${address}
+- Phone: ${phone}
 - Conditions: ${conditions}
 - Medications: ${medications}
-- Allergies: ${allergies}`;
+- Allergies: ${allergies}
+- Past encounters: ${encounters}`;
+}
+
+function formatPatientName(patient: Patient): string | undefined {
+  const name = patient.name?.[0];
+  if (!name) return undefined;
+  const parts = [...(name.given ?? []), name.family].filter(Boolean);
+  return parts.length ? parts.join(' ') : undefined;
+}
+
+function formatPatientAddress(patient: Patient): string | undefined {
+  const address = patient.address?.[0];
+  if (!address) return undefined;
+  const parts = [...(address.line ?? []), address.city, address.state, address.postalCode].filter(Boolean);
+  return parts.length ? parts.join(', ') : undefined;
 }
 
 const DEFAULT_CHAT_USER_PROMPT_BYTE_LIMIT = 8 * 1024 * 1024;

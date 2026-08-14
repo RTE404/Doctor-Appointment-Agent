@@ -235,6 +235,13 @@ describe('booking chat prompts', () => {
     expect(prompt).toContain('ask_clarifying_question');
   });
 
+  test('system prompt tells the model the patient context already has everything on file and to never ask for the patient\'s zip code or city', () => {
+    const prompt = BOOKING_CHAT_SYSTEM_PROMPT.toLowerCase();
+    expect(prompt).toContain('never ask the patient for information already shown there');
+    expect(prompt).toContain('never ask for their zip code or city');
+    expect(prompt).toContain('search_nppes automatically searches near their');
+  });
+
   test('system prompt tells the model a message after propose_options is feedback on those options, not a fresh start', () => {
     const prompt = BOOKING_CHAT_SYSTEM_PROMPT.toLowerCase();
     expect(prompt).toContain('propose_options');
@@ -269,6 +276,7 @@ describe('booking chat prompts', () => {
       medications: [{ resourceType: 'MedicationRequest', status: 'active', intent: 'order', subject: { reference: 'Patient/test' }, medicationCodeableConcept: { text: 'Albuterol' } }],
       allergies: [{ resourceType: 'AllergyIntolerance', patient: { reference: 'Patient/test' }, code: { text: 'Penicillin' } }],
       encounters: [],
+      encounterSummaries: [],
     });
 
     expect(message).toContain('Asthma');
@@ -283,8 +291,78 @@ describe('booking chat prompts', () => {
       medications: [],
       allergies: [],
       encounters: [],
+      encounterSummaries: [],
     });
 
     expect(message).toContain('none recorded');
+  });
+
+  test('buildPatientContextMessage includes the patient\'s name, address, and phone on file', () => {
+    const message = buildPatientContextMessage({
+      patient: {
+        resourceType: 'Patient',
+        name: [{ given: ['Asha'], family: 'Rao' }],
+        address: [{ line: ['10 Main Street'], city: 'Boston', state: 'MA', postalCode: '02108' }],
+        telecom: [{ system: 'phone', value: '+1-617-555-0100' }],
+      },
+      conditions: [],
+      medications: [],
+      allergies: [],
+      encounters: [],
+      encounterSummaries: [],
+    });
+
+    expect(message).toContain('Asha Rao');
+    expect(message).toContain('10 Main Street');
+    expect(message).toContain('Boston');
+    expect(message).toContain('MA');
+    expect(message).toContain('02108');
+    expect(message).toContain('+1-617-555-0100');
+  });
+
+  test('buildPatientContextMessage reports "not recorded" when the patient has no name, address, or phone on file', () => {
+    const message = buildPatientContextMessage({
+      patient: { resourceType: 'Patient' },
+      conditions: [],
+      medications: [],
+      allergies: [],
+      encounters: [],
+      encounterSummaries: [],
+    });
+
+    expect(message).toContain('Name: not recorded');
+    expect(message).toContain('Address: not recorded');
+    expect(message).toContain('Phone: not recorded');
+  });
+
+  test('buildPatientContextMessage summarizes past encounters with practitioner, specialty, and organization', () => {
+    const message = buildPatientContextMessage({
+      patient: { resourceType: 'Patient' },
+      conditions: [],
+      medications: [],
+      allergies: [],
+      encounters: [],
+      encounterSummaries: [
+        { date: '2026-01-01', practitionerName: 'Dr. Jane Doe', specialty: 'Cardiology', organizationName: 'Central Clinic' },
+      ],
+    });
+
+    expect(message).toContain('2026-01-01');
+    expect(message).toContain('Dr. Jane Doe');
+    expect(message).toContain('Cardiology');
+    expect(message).toContain('Central Clinic');
+  });
+
+  test('buildPatientContextMessage reports no past encounters on record when there are none', () => {
+    const message = buildPatientContextMessage({
+      patient: { resourceType: 'Patient' },
+      conditions: [],
+      medications: [],
+      allergies: [],
+      encounters: [],
+      encounterSummaries: [],
+    });
+
+    expect(message).toContain('Past encounters: none recorded');
   });
 });
