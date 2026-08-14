@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 
 function readProjectFile(path: string): string {
@@ -29,6 +29,28 @@ describe('deployment configuration', () => {
     expect(vercel.functions['api/reset-demo.ts'].maxDuration).toBe(60);
     expect(vercel.crons).toEqual([{ path: '/api/reset-demo', schedule: '30 20 * * *' }]);
     expect(vercel.rewrites).toEqual([{ source: '/(.*)', destination: '/index.html' }]);
+  });
+
+  test('starts the combined local stack with a rewrite-free Vercel configuration', () => {
+    const packageJson = JSON.parse(readProjectFile('package.json')) as {
+      scripts: Record<string, string>;
+    };
+    const localConfigUrl = new URL('../../vercel.dev.json', import.meta.url);
+
+    expect(packageJson.scripts['dev:full']).toBe('npx vercel dev --listen 3000 --local-config vercel.dev.json');
+    expect(existsSync(localConfigUrl)).toBe(true);
+    if (!existsSync(localConfigUrl)) {
+      return;
+    }
+
+    const localVercel = JSON.parse(readFileSync(localConfigUrl, 'utf8')) as {
+      framework?: string;
+      functions?: Record<string, { maxDuration: number }>;
+      rewrites?: unknown;
+    };
+    expect(localVercel.framework).toBe('vite');
+    expect(localVercel.functions?.['api/execute.ts'].maxDuration).toBe(60);
+    expect(localVercel.rewrites).toBeUndefined();
   });
 
   test('keeps browser configuration limited to approved public Medplum values', () => {

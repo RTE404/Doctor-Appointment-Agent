@@ -8,6 +8,7 @@
     "build:bots": "npm run clean && tsc && node --no-warnings esbuild-script.mjs && tsx src/scripts/deploy-bots.ts",
     "clean": "rimraf dist data/core/example-bots.json",
     "dev": "vite",
+    "dev:full": "npx vercel dev --listen 3000 --local-config vercel.dev.json",
     "lint": "eslint src/ api/",
     "lint:fix": "eslint src/ --fix",
     "preview": "vite preview",
