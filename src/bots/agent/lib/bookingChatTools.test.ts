@@ -41,6 +41,23 @@ describe('BOOKING_CHAT_TOOL_SCHEMAS', () => {
     }
   });
 
+  test('propose_options accepts an optional preferences object for the deterministic fallback to use', () => {
+    const proposeOptions = BOOKING_CHAT_TOOL_SCHEMAS.find((t) => t.function.name === 'propose_options');
+    const parameters = proposeOptions?.function.parameters as unknown as {
+      properties: Record<string, { properties?: Record<string, unknown> }>;
+      required: string[];
+    };
+
+    expect(Object.keys(parameters.properties.preferences?.properties ?? {})).toStrictEqual([
+      'timeOfDay',
+      'preferPreviousDoctor',
+      'preferNearby',
+    ]);
+    // Optional: the model's own picks are the primary mechanism every time;
+    // preferences only matter if the deterministic fallback has to run.
+    expect(parameters.required).not.toContain('preferences');
+  });
+
   test('check_availability does not accept previousDoctor/distanceMiles as model-supplied arguments', () => {
     // Both are derived server-side from the candidate the NPI actually came
     // from, never from an unverifiable model claim — a model that could set

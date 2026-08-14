@@ -90,6 +90,17 @@ export const BOOKING_CHAT_TOOL_SCHEMAS = [
           specialty: { type: 'string', description: 'One label from the supported specialty list' },
           reason: { type: 'string' },
           summary: { type: 'string' },
+          preferences: {
+            type: 'object',
+            description:
+              'The scheduling preferences you inferred from the patient. Used only if your picks need automatic ' +
+              'correction (e.g. too many for one provider) — never overrides your own chosen order.',
+            properties: {
+              timeOfDay: { type: 'string', enum: ['morning', 'afternoon', 'evening'] },
+              preferPreviousDoctor: { type: 'boolean' },
+              preferNearby: { type: 'boolean' },
+            },
+          },
           picks: {
             type: 'array',
             items: {
