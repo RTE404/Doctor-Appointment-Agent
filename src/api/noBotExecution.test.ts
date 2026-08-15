@@ -3,8 +3,6 @@ import { readFile } from 'node:fs/promises';
 const workflowFiles = [
   '../components/actions/RescheduleAppointment.tsx',
   '../pages/agent/PatientHistoryPage.tsx',
-  '../pages/agent/DoctorResultsPage.tsx',
-  '../pages/agent/SlotPickerPage.tsx',
   '../pages/desk/PatientAgentChatPage.tsx',
   '../pages/UploadDataPage.tsx',
 ];

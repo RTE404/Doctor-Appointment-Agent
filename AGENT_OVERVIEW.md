@@ -247,10 +247,6 @@ This specific concierge does not yet provide standalone tools for:
 - Preference editing
 - Long-term memory
 
-`DoctorResultsPage`/`SlotPickerPage` (`/agent/:patientId/doctors`, `/agent/:patientId/doctors/:npi/slots`) still exist
-as routes but are a separate, manual `BookingContext`-driven flow, currently disconnected from the chat — nothing in
-the concierge above links to them.
-
 Those capabilities can be separate future tools. The agent delivered today is deliberately focused on discovery,
 preference-aware ranking, explicit confirmation, and booking.
 
