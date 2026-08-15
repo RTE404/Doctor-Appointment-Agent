@@ -38,6 +38,10 @@ describe('createBookingSession', () => {
       code: 'ai-booking-session',
     });
     expect(session.communication.meta?.tag).toContainEqual({ code: 'ai-generated' });
+    expect(session.communication.meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
     expect(session.transcript).toStrictEqual(initialTranscript);
   });
 

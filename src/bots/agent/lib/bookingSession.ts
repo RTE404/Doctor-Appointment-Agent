@@ -1,6 +1,7 @@
 // src/bots/agent/lib/bookingSession.ts
 import type { MedplumClient } from '@medplum/core';
 import type { Communication } from '@medplum/fhirtypes';
+import { withDemoGeneratedTag } from '../../../demo/demoTag.js';
 
 export interface BookingToolCall {
   id: string;
@@ -45,7 +46,7 @@ export async function createBookingSession(
     subject: { reference: `Patient/${patientId}` },
     sender: { reference: senderReference },
     payload: [{ contentString: JSON.stringify(initialTranscript) }],
-    meta: { tag: [{ code: 'ai-generated' }] },
+    meta: withDemoGeneratedTag({ tag: [{ code: 'ai-generated' }] }),
   });
   return { communication, transcript: initialTranscript };
 }

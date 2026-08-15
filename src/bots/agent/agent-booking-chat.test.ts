@@ -250,8 +250,16 @@ describe('agent-booking-chat handler', () => {
     const summary = await medplum.readResource('Communication', result.summaryCommunicationId);
     expect(summary.status).toBe('preparation');
     expect(summary.topic?.coding?.[0]).toMatchObject({ code: '208D00000X' });
+    expect(summary.meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
     const session = await medplum.readResource('Communication', result.sessionId);
     expect(session.status).toBe('in-progress');
+    expect(session.meta?.tag).toContainEqual({
+      system: 'https://doctor-appointment-agent.example/fhir/demo',
+      code: 'demo-generated',
+    });
   });
 
   test('a follow-up message after options were proposed resumes the same session instead of being rejected', async () => {

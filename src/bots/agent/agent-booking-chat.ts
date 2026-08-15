@@ -1,6 +1,7 @@
 // src/bots/agent/agent-booking-chat.ts
 import type { BotEvent, MedplumClient } from '@medplum/core';
 import type { Communication } from '@medplum/fhirtypes';
+import { withDemoGeneratedTag } from '../../demo/demoTag.js';
 import { BOOKING_CHAT_SYSTEM_PROMPT, buildPatientContextMessage } from './lib/prompts.js';
 import { loadPatientClinicalContext } from './lib/patientContext.js';
 import {
@@ -81,7 +82,7 @@ async function writeSummaryCommunication(
     subject: { reference: `Patient/${patientId}` },
     sender: { reference: `Device/${agentDevice.id}` },
     payload: [{ contentString: resolved.summary }],
-    meta: { tag: [{ code: 'ai-generated' }] },
+    meta: withDemoGeneratedTag({ tag: [{ code: 'ai-generated' }] }),
   });
   return communication.id as string;
 }
