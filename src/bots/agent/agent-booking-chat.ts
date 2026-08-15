@@ -201,8 +201,18 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookingCha
     }
   }
 
-  await persistBookingSession(medplum, session, 'stopped');
-  return { kind: 'error', sessionId: session.communication.id as string, reply: "I wasn't able to find a good match — let's start again." };
+  // Hitting the step cap without a terminal action (ask_clarifying_question
+  // or propose_options) isn't a dead end — everything the loop already
+  // gathered stays in the transcript. Keep the session in-progress and ask
+  // the patient for more to narrow down, the same as an explicit
+  // ask_clarifying_question, so the next message resumes with that history
+  // intact instead of forcing a full restart.
+  await persistBookingSession(medplum, session, 'in-progress');
+  return {
+    kind: 'question',
+    sessionId: session.communication.id as string,
+    reply: "I'm still narrowing this down — could you tell me a bit more about what you're looking for (like a preferred day, time, or doctor)?",
+  };
 }
 
 function appendSkippedRemainder(

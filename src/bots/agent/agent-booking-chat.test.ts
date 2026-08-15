@@ -151,7 +151,7 @@ describe('agent-booking-chat handler', () => {
     ).rejects.toThrow('Booking chat session not found for this patient');
   });
 
-  test('stops after the step cap and marks the session stopped', async () => {
+  test('reaching the step cap asks the patient for more instead of discarding the session', async () => {
     const medplum = new MockClient();
     const { patientId } = await seedFixtures(medplum);
     let calls = 0;
@@ -162,10 +162,21 @@ describe('agent-booking-chat handler', () => {
 
     const result = await handler(medplum, event({ patientId, message: 'anything' }));
 
-    expect(result.kind).toBe('error');
+    expect(result.kind).toBe('question');
     expect(calls).toBe(8);
     const communication = await medplum.readResource('Communication', result.sessionId);
-    expect(communication.status).toBe('stopped');
+    expect(communication.status).toBe('in-progress');
+
+    // The session stays resumable, reusing every tool call already made.
+    __setGeminiToolCallerForTests(async () =>
+      toolCallResponse('call-resume', 'ask_clarifying_question', { question: 'follow-up question' })
+    );
+    const resumed = await handler(
+      medplum,
+      event({ patientId, message: 'more detail', sessionId: (result as { sessionId: string }).sessionId })
+    );
+
+    expect(resumed).toMatchObject({ kind: 'question', reply: 'follow-up question' });
   });
 
   test('propose_options success returns grounded options and a summary Communication id, and keeps the session resumable', async () => {
