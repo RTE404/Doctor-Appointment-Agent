@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="#-whats-built-here-vs-the-medplum-reference">What's Built Here</a> ·
   <a href="#-patient-appointment-concierge">Concierge</a> ·
   <a href="#-how-it-works">Architecture</a> ·
   <a href="#-getting-started">Getting Started</a> ·
@@ -36,11 +37,30 @@ deterministic code handles everything that matters:
 
 - A chat-based **Patient Appointment Concierge** that turns a plain-language request into a grounded, bookable
   appointment — see [below](#-patient-appointment-concierge) for the full agent design.
-- Creating [`Slot`](/docs/api/fhir/resources/slot)s to manage provider availability.
-- Managing the [`Appointment`](/docs/api/fhir/resources/appointment) lifecycle: creating, rescheduling, and canceling.
-- Creating an [`Encounter`](/docs/api/fhir/resources/encounter) after an appointment is completed.
+- Creating [`Slot`](https://www.medplum.com/docs/api/fhir/resources/slot)s to manage provider availability.
+- Managing the [`Appointment`](https://www.medplum.com/docs/api/fhir/resources/appointment) lifecycle: creating, rescheduling, and canceling.
+- Creating an [`Encounter`](https://www.medplum.com/docs/api/fhir/resources/encounter) after an appointment is completed.
 - Using [Medplum React Components](https://storybook.medplum.com/?path=/docs/medplum-introduction--docs) to build a
   scheduling UI.
+
+## 🔨 What's built here vs. the Medplum reference
+
+This project started from Medplum's open-source
+[`medplum-scheduling-demo`](https://github.com/medplum/medplum-scheduling-demo), which supplies the React/Vite shell,
+the `@medplum/react` provider-calendar pages, and the core appointment-lifecycle bots. Everything that makes this an
+*agent* was built for this project — about 10,300 lines of TypeScript across 85 files:
+
+| Area | Path | What it does |
+|---|---|---|
+| **Concierge agent** | `src/bots/agent/**` | The Gemini tool-calling loop and the deterministic layer wrapped around it: specialty routing, availability grounding, distinct-provider capping, preference ranking, NPPES provider lookup, geo distance, prompt construction, and resumable booking sessions. |
+| **Patient flow** | `src/pages/agent/**` | Patient picker → multi-turn chat → option comparison → confirmation gate → booking confirmation. |
+| **Doctor desk** | `src/pages/desk/**` | NPI-scoped view of booked appointments. |
+| **Server boundary** | `api/**` | `execute.ts`, the single allowlisted mutation boundary — re-authenticates as a server-only worker and revalidates every mutation against live FHIR state, keeping worker credentials out of the browser. Plus the shared demo session and the nightly reset cron. |
+| **Data tooling** | `tools/seed/**` | One-shot importer for a 983-bundle Synthea dataset, correcting two upstream data defects (duplicate `Practitioner` resources and broken specialty resolution). |
+
+The dual-identity security model — a read-only browser `ClientApplication` enforced by a Medplum `AccessPolicy`,
+with a separate server-only worker for all writes — and the test suite (53 test files, run on every change alongside
+ESLint and a production build) are likewise original to this project.
 
 ## 🤖 Patient Appointment Concierge
 
@@ -170,7 +190,12 @@ Medplum `ClientApplication` resources; **do not use personal account credentials
 - A **server worker application** with only the FHIR permissions and operations required by booking, intake, chat,
   rescheduling, cancellation, encounter completion, and tagged cleanup. Its token is never sent to the browser.
 
-[Fork](https://github.com/medplum/medplum-scheduling-demo/fork) and clone the repo to your local machine.
+Clone this repository to your local machine:
+
+```bash
+git clone https://github.com/RTE404/Doctor-Appointment-Agent.git
+cd Doctor-Appointment-Agent
+```
 
 ### Environment variables
 

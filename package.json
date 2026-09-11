@@ -1,6 +1,6 @@
 {
-  "name": "medplum-scheduling-demo",
-  "version": "5.0.12",
+  "name": "doctor-appointment-agent",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
