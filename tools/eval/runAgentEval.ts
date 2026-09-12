@@ -1,8 +1,10 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { config } from 'dotenv';
 
 import { executeDeterministicScenario } from './deterministicExecutor.js';
 import { loadScenarioCatalog } from './loadScenarios.js';
+import { createModelExecutor } from './modelExecutor.js';
 import { aggregateEvaluation } from './scorers.js';
 import type {
   AgentEvalCatalog,
@@ -44,6 +46,7 @@ export function parseCliArgs(args: string[]): EvalCliOptions {
     repetitions: 1,
     output: 'results/evals',
   };
+  let repetitionsProvided = false;
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
     const value = args[index + 1];
@@ -61,6 +64,7 @@ export function parseCliArgs(args: string[]): EvalCliOptions {
           throw new Error('repetitions must be a positive integer');
         }
         options.repetitions = repetitions;
+        repetitionsProvided = true;
         break;
       }
       case '--scenario':
@@ -79,6 +83,9 @@ export function parseCliArgs(args: string[]): EvalCliOptions {
   }
   if (options.scenario && options.category) {
     throw new Error('--scenario and --category cannot be combined');
+  }
+  if (options.mode === 'model' && !repetitionsProvided) {
+    options.repetitions = 3;
   }
   return options;
 }
@@ -124,15 +131,26 @@ function selectScenarios(catalog: AgentEvalCatalog, options: EvalCliOptions): Ag
 
 export async function runCli(args: string[]): Promise<void> {
   const options = parseCliArgs(args);
-  if (options.mode !== 'deterministic') {
-    throw new Error(options.mode + ' execution is not configured yet');
+  let catalog = selectScenarios(loadScenarioCatalog('data/evals/booking-scenarios.json'), options);
+  let executor: AgentEvalExecutor;
+  if (options.mode === 'deterministic') {
+    executor = { execute: (scenario) => executeDeterministicScenario(scenario) };
+  } else if (options.mode === 'model') {
+    config({ path: '.env.local', quiet: true });
+    const apiKey = process.env.GEMINI_API_KEY?.trim() ?? '';
+    if (apiKey === '') {
+      throw new Error('GEMINI_API_KEY is not configured for model evaluation');
+    }
+    catalog = { ...catalog, scenarios: catalog.scenarios.filter((scenario) => scenario.modelEligible) };
+    if (catalog.scenarios.length === 0) {
+      throw new Error('No model-eligible scenarios matched the requested filter');
+    }
+    console.log('Gemini configuration: present');
+    executor = createModelExecutor({ apiKey, concurrency: 1 });
+  } else {
+    throw new Error('live-smoke execution is not configured yet');
   }
-  const catalog = selectScenarios(loadScenarioCatalog('data/evals/booking-scenarios.json'), options);
-  const result = await runEvaluation(
-    catalog,
-    { execute: (scenario) => executeDeterministicScenario(scenario) },
-    options
-  );
+  const result = await runEvaluation(catalog, executor, options);
   console.log(JSON.stringify({ mode: options.mode, output: options.output, aggregate: result.aggregate }, null, 2));
 }
 

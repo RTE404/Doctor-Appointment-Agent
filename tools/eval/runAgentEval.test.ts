@@ -110,6 +110,11 @@ describe('parseCliArgs', () => {
     });
   });
 
+  it('defaults model evaluation to three repetitions', () => {
+    expect(parseCliArgs(['--mode', 'model']).repetitions).toBe(3);
+    expect(parseCliArgs(['--mode', 'model', '--repetitions', '2']).repetitions).toBe(2);
+  });
+
   it('rejects unknown flags, invalid counts, and conflicting filters', () => {
     expect(() => parseCliArgs(['--unknown', 'value'])).toThrow('Unknown flag');
     expect(() => parseCliArgs(['--repetitions', '0'])).toThrow(
