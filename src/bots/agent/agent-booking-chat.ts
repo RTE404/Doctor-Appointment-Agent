@@ -16,7 +16,7 @@ import type { BookingChatMessage, BookingSession, BookingToolCall } from './lib/
 import { runBookingChatLoop } from './lib/bookingChatLoop.js';
 import type { BookingChatLoopResult, BookingChatTraceEvent } from './lib/bookingChatLoop.js';
 export { MAX_TOOL_LOOP_STEPS } from './lib/bookingChatLoop.js';
-import { resolveProposedOptions } from './lib/proposeOptions.js';
+import type { resolveProposedOptions } from './lib/proposeOptions.js';
 
 export type BookingChatInput = { patientId: string; message: string; sessionId?: string };
 

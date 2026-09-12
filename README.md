@@ -248,6 +248,10 @@ The app runs at `http://localhost:3000/`.
 
 | Command | What it does |
 |---|---|
+| npm run eval:agent | Run all 120 deterministic synthetic agent evaluations and write privacy-safe reports |
+| npm run eval:agent:model | Run the 40 model-eligible cases three times with controlled synthetic tools (uses Gemini) |
+| npm run eval:agent:smoke | Run the separately authorized eight-case synthetic Medplum/Gemini integration smoke |
+| Evaluation evidence | [Agent evaluation baseline](docs/metrics/agent-eval-baseline.md), including counts and limitations |
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run test:coverage` | Vitest with coverage |

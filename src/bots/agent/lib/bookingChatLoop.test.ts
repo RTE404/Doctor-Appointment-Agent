@@ -24,7 +24,7 @@ function toolCall(name: string, args: Record<string, unknown>, id = 'call-1'): B
 }
 
 function runtime(options: {
-  responses: Array<{ message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] } }>;
+  responses: { message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] } }[];
   trace: BookingChatTraceEvent[];
   executeTool?: BookingChatLoopRuntime['executeTool'];
 }): BookingChatLoopRuntime {

@@ -1,6 +1,7 @@
 # Improvement Plan
 
-**Status:** Proposed for review. No implementation has started.
+**Status:** Phase 1 local implementation complete. The deterministic baseline is verified; the paid Gemini baseline and
+external Medplum smoke remain pending explicit authorization.
 
 **Approved scope:** Implement the following three improvements, one at a time, in this order:
 
@@ -48,6 +49,21 @@ baseline; Phase 1 and Phase 2 will establish them.
 ---
 
 ## Phase 1: Build a real agent evaluation suite
+
+### Implementation status (2026-09-13)
+
+- Complete: traceable production booking loop, validated scenario contract, pure scorers and fail-closed safety gates.
+- Complete: deterministic executors for booking orchestration, ranking, grounding, confirmation, slot conflicts, and
+  patient-bound session behavior.
+- Complete: deterministic generator and versioned 120-scenario catalog with the approved 40/25/20/20/15 category mix.
+- Complete: controlled Gemini evaluator for exactly 40 routing scenarios with a default of three repetitions.
+- Complete: privacy-safe JSON/Markdown report generation and an eight-scenario, run-tagged live-smoke implementation.
+- Verified: the deterministic report is byte-stable across two runs and passes 120/120 scenarios; see
+  docs/metrics/agent-eval-baseline.md.
+- Verified: 58 focused evaluation tests, the complete 385-test repository suite, API ESM compilation, lint, and the
+  production build pass.
+- Pending external execution: the Gemini model baseline and live Medplum smoke. Neither result is claimed until the
+  corresponding command is explicitly authorized and succeeds.
 
 ### Goal
 
