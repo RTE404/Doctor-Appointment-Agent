@@ -14,7 +14,7 @@ import {
 import { createBookingSession, loadBookingSession, persistBookingSession } from './lib/bookingSession.js';
 import type { BookingChatMessage, BookingSession, BookingToolCall } from './lib/bookingSession.js';
 import { runBookingChatLoop } from './lib/bookingChatLoop.js';
-import type { BookingChatLoopResult } from './lib/bookingChatLoop.js';
+import type { BookingChatLoopResult, BookingChatTraceEvent } from './lib/bookingChatLoop.js';
 export { MAX_TOOL_LOOP_STEPS } from './lib/bookingChatLoop.js';
 import { resolveProposedOptions } from './lib/proposeOptions.js';
 
@@ -117,7 +117,11 @@ async function executeReadOnlyTool(
   }
 }
 
-export async function handler(medplum: MedplumClient, event: BotEvent<BookingChatInput>): Promise<BookingChatResult> {
+export async function handler(
+  medplum: MedplumClient,
+  event: BotEvent<BookingChatInput>,
+  onTrace?: (event: BookingChatTraceEvent) => void
+): Promise<BookingChatResult> {
   const { patientId, message, sessionId } = event.input;
   const apiKey = event.secrets['GEMINI_API_KEY']?.valueString as string;
 
@@ -140,5 +144,6 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookingCha
     executeTool: (name, args, transcript) => executeReadOnlyTool(medplum, patientId, name, args, transcript),
     writeSummary: (resolved) => writeSummaryCommunication(medplum, patientId, resolved),
     persist: (currentSession, status) => persistBookingSession(medplum, currentSession, status),
+    onTrace,
   });
 }

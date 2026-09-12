@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 
 import { executeDeterministicScenario } from './deterministicExecutor.js';
+import { createLiveSmokeExecutor } from './liveSmokeExecutor.js';
 import { loadScenarioCatalog } from './loadScenarios.js';
 import { createModelExecutor } from './modelExecutor.js';
 import { buildReport, writeReportFiles } from './report.js';
@@ -150,7 +151,23 @@ export async function runCli(args: string[]): Promise<void> {
     console.log('Gemini configuration: present');
     executor = createModelExecutor({ apiKey, concurrency: 1 });
   } else {
-    throw new Error('live-smoke execution is not configured yet');
+    config({ path: '.env.local', quiet: true });
+    catalog = {
+      ...catalog,
+      scenarios: catalog.scenarios.filter((scenario) => scenario.liveSmokeEligible),
+    };
+    if (catalog.scenarios.length === 0) {
+      throw new Error('No live-smoke scenarios matched the requested filter');
+    }
+    executor = createLiveSmokeExecutor({
+      MEDPLUM_BASE_URL: process.env.MEDPLUM_BASE_URL,
+      MEDPLUM_PROJECT_ID: process.env.MEDPLUM_PROJECT_ID,
+      DEMO_MEDPLUM_CLIENT_ID: process.env.DEMO_MEDPLUM_CLIENT_ID,
+      DEMO_MEDPLUM_CLIENT_SECRET: process.env.DEMO_MEDPLUM_CLIENT_SECRET,
+      DEMO_WORKER_CLIENT_ID: process.env.DEMO_WORKER_CLIENT_ID,
+      DEMO_WORKER_CLIENT_SECRET: process.env.DEMO_WORKER_CLIENT_SECRET,
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    });
   }
   const result = await runEvaluation(catalog, executor, options);
   const report = buildReport({
@@ -158,7 +175,7 @@ export async function runCli(args: string[]): Promise<void> {
     observations: result.observations,
     aggregate: result.aggregate,
     mode: options.mode,
-    ...(options.mode === 'model' ? { model: 'gemini-3.5-flash-lite' } : {}),
+    ...(options.mode !== 'deterministic' ? { model: 'gemini-3.5-flash-lite' } : {}),
     repetitions: options.repetitions,
     command: 'npx tsx tools/eval/runAgentEval.ts ' + args.join(' '),
     gitCommit: execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -166,7 +183,9 @@ export async function runCli(args: string[]): Promise<void> {
     limitations:
       options.mode === 'model'
         ? ['Controlled tools use synthetic fixtures and do not verify a live Medplum deployment.']
-        : ['Model-dependent language quality is reported separately.'],
+        : options.mode === 'live-smoke'
+          ? ['This is an eight-scenario synthetic integration smoke, not a load test.']
+          : ['Model-dependent language quality is reported separately.'],
   });
   const reportFiles = writeReportFiles(options.output, report);
   console.log(

@@ -9,6 +9,7 @@ import type { BookInput, BookResult } from './agent-book-appointment';
 import { __setGeminiToolCallerForTests, handler } from './agent-booking-chat';
 import type { BookingChatInput } from './agent-booking-chat';
 import type { BookingToolCall } from './lib/bookingSession';
+import type { BookingChatTraceEvent } from './lib/bookingChatLoop';
 import { __setNppesLookupForTests } from './lib/ensurePractitionerAndSchedule';
 
 beforeAll(() => {
@@ -116,6 +117,29 @@ describe('agent-booking-chat handler', () => {
     if (result.kind !== 'question') throw new Error('expected question');
     const communication = await medplum.readResource('Communication', result.sessionId);
     expect(communication.status).toBe('in-progress');
+  });
+
+  test('optionally emits sanitized booking-loop trace events for diagnostics', async () => {
+    const medplum = new MockClient();
+    const { patientId } = await seedFixtures(medplum);
+    const trace: BookingChatTraceEvent[] = [];
+    __setGeminiToolCallerForTests(async () =>
+      toolCallResponse('call-1', 'ask_clarifying_question', { question: 'Private question text' })
+    );
+
+    await handler(
+      medplum,
+      event({ patientId, message: 'Private patient message' }),
+      (traceEvent) => trace.push(traceEvent)
+    );
+
+    expect(trace).toEqual([
+      { type: 'model-call', step: 0 },
+      { type: 'model-response', step: 0, toolNames: ['ask_clarifying_question'] },
+      { type: 'tool-result', step: 0, toolName: 'ask_clarifying_question', outcome: 'ok' },
+      { type: 'terminal', step: 0, kind: 'question' },
+    ]);
+    expect(JSON.stringify(trace)).not.toContain('Private');
   });
 
   test('resumes an existing session and appends the new patient message to the persisted transcript', async () => {
