@@ -9,6 +9,7 @@ import type {
   EvalProviderFixture,
   EvalSafetyGate,
   EvalTerminalKind,
+  EvalToolCallFixture,
 } from './types.js';
 
 const CATEGORIES = new Set<EvalCategory>([
@@ -112,7 +113,7 @@ function validateModelTurn(value: unknown, scenarioId: string): EvalModelTurnFix
       if (!['search_previous_physician', 'search_nppes', 'check_availability', 'ask_clarifying_question', 'propose_options'].includes(name)) {
         throw new Error(`Scenario ${scenarioId} has an unknown model tool`);
       }
-      return { name: name as EvalModelTurnFixture & never, args: call.args } as never;
+      return { name: name as EvalToolCallFixture['name'], args: call.args };
     }),
   };
 }

@@ -1,0 +1,122 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { parseCliArgs, runEvaluation } from './runAgentEval';
+import type { AgentEvalCatalog, AgentEvalObservation } from './types';
+
+const catalog: AgentEvalCatalog = {
+  version: 1,
+  scenarios: [
+    {
+      id: 'case-a',
+      category: 'routing-clarification',
+      description: 'Synthetic case A.',
+      patientMessage: 'Find a doctor.',
+      modelEligible: true,
+      deterministicDriver: 'booking-chat-loop',
+      liveSmokeEligible: false,
+      fixture: {},
+      expected: { terminalKind: 'question', clarification: 'allowed', safetyGates: [] },
+    },
+    {
+      id: 'case-b',
+      category: 'preference-ranking',
+      description: 'Synthetic case B.',
+      patientMessage: 'Find a nearby doctor.',
+      modelEligible: false,
+      deterministicDriver: 'preference-ranking',
+      liveSmokeEligible: false,
+      fixture: {},
+      expected: { terminalKind: 'question', clarification: 'allowed', safetyGates: [] },
+    },
+  ],
+};
+
+function observed(
+  scenarioId: string,
+  repetition: number,
+  toolNames: string[] = []
+): AgentEvalObservation {
+  return {
+    scenarioId,
+    mode: 'deterministic',
+    repetition,
+    terminalKind: 'question',
+    toolNames,
+    loopSteps: 0,
+    displayedOptions: [],
+    availableOptionKeys: [],
+    searchedProviderAliases: [],
+    clarificationAsked: false,
+    confirmationRequested: false,
+    bookingMutationCount: 0,
+    bookingMutationCountBeforeConfirmation: 0,
+    crossPatientSessionAccepted: false,
+    duplicateAppointmentCount: 0,
+    slotConflictRejected: false,
+    sessionResumed: false,
+  };
+}
+
+describe('runEvaluation', () => {
+  it('executes every scenario for every repetition in stable order', async () => {
+    const execute = vi.fn(async (scenario, repetition) =>
+      observed(
+        scenario.id,
+        repetition,
+        scenario.deterministicDriver === 'booking-chat-loop' ? ['ask_clarifying_question'] : []
+      )
+    );
+
+    const result = await runEvaluation(catalog, { execute }, { mode: 'deterministic', repetitions: 2 });
+
+    expect(execute.mock.calls.map(([scenario, repetition]) => [scenario.id, repetition])).toEqual([
+      ['case-a', 1],
+      ['case-a', 2],
+      ['case-b', 1],
+      ['case-b', 2],
+    ]);
+    expect(result.observations).toHaveLength(4);
+    expect(result.aggregate.taskSuccess.value).toBe(1);
+  });
+
+  it('rejects invalid repetitions before invoking the executor', async () => {
+    const execute = vi.fn();
+
+    await expect(
+      runEvaluation(catalog, { execute }, { mode: 'deterministic', repetitions: 0 })
+    ).rejects.toThrow('repetitions must be a positive integer');
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseCliArgs', () => {
+  it('parses the supported deterministic CLI options', () => {
+    expect(
+      parseCliArgs([
+        '--mode',
+        'deterministic',
+        '--repetitions',
+        '2',
+        '--category',
+        'routing-clarification',
+        '--output',
+        'results/evals',
+      ])
+    ).toEqual({
+      mode: 'deterministic',
+      repetitions: 2,
+      category: 'routing-clarification',
+      output: 'results/evals',
+    });
+  });
+
+  it('rejects unknown flags, invalid counts, and conflicting filters', () => {
+    expect(() => parseCliArgs(['--unknown', 'value'])).toThrow('Unknown flag');
+    expect(() => parseCliArgs(['--repetitions', '0'])).toThrow(
+      'repetitions must be a positive integer'
+    );
+    expect(() =>
+      parseCliArgs(['--scenario', 'case-a', '--category', 'routing-clarification'])
+    ).toThrow('cannot be combined');
+  });
+});

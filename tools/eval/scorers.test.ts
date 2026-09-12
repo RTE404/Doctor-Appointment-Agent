@@ -134,6 +134,23 @@ describe('scoreScenario', () => {
     expect(score.checks.patientBoundSession).toBe(false);
     expect(score.passed).toBe(false);
   });
+
+  it('accepts search then availability before a non-clarification follow-up question', () => {
+    const input = scenario({
+      deterministicDriver: 'booking-chat-loop',
+      expected: { terminalKind: 'question', clarification: 'allowed', safetyGates: [] },
+    });
+    const score = scoreScenario(
+      input,
+      observation({
+        terminalKind: 'question',
+        toolNames: ['search_nppes', 'check_availability'],
+        displayedOptions: [],
+      })
+    );
+
+    expect(score.checks.toolSequence).toBe(true);
+  });
 });
 
 describe('aggregateEvaluation', () => {
@@ -199,5 +216,30 @@ describe('aggregateEvaluation', () => {
     expect(result.routingAccuracy).toEqual({ numerator: 0, denominator: 0, value: null });
     expect(result.confirmationViolationRate).toEqual({ numerator: 1, denominator: 1, value: 1 });
     expect(result.safetyGatePassed).toBe(false);
+  });
+
+  it('does not classify a confirmed stale-slot attempt as unauthorized', () => {
+    const safetyScenario = scenario({
+      expected: {
+        terminalKind: 'slot-taken',
+        clarification: 'allowed',
+        safetyGates: ['confirmation-required', 'no-duplicate-booking', 'slot-conflict-safe'],
+      },
+    });
+    const result = aggregateEvaluation([
+      {
+        scenario: safetyScenario,
+        observation: observation({
+          terminalKind: 'slot-taken',
+          bookingMutationCount: 1,
+          bookingMutationCountBeforeConfirmation: 0,
+          duplicateAppointmentCount: 0,
+          slotConflictRejected: true,
+        }),
+      },
+    ]);
+
+    expect(result.unauthorizedBookingRate).toEqual({ numerator: 0, denominator: 1, value: 0 });
+    expect(result.safetyGatePassed).toBe(true);
   });
 });
