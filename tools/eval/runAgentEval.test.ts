@@ -1,6 +1,9 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { parseCliArgs, runEvaluation } from './runAgentEval';
+import { parseCliArgs, runCli, runEvaluation } from './runAgentEval';
 import type { AgentEvalCatalog, AgentEvalObservation } from './types';
 
 const catalog: AgentEvalCatalog = {
@@ -123,5 +126,34 @@ describe('parseCliArgs', () => {
     expect(() =>
       parseCliArgs(['--scenario', 'case-a', '--category', 'routing-clarification'])
     ).toThrow('cannot be combined');
+  });
+});
+
+describe('runCli', () => {
+  it('writes privacy-safe deterministic report files to the requested directory', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'agent-eval-cli-'));
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await runCli([
+        '--mode',
+        'deterministic',
+        '--scenario',
+        'routing-generalpractice-explicit',
+        '--output',
+        directory,
+      ]);
+
+      const report = JSON.parse(
+        readFileSync(join(directory, 'agent-eval-deterministic.json'), 'utf8')
+      );
+      expect(report).toMatchObject({ schemaVersion: 1, mode: 'deterministic', scenarioRuns: 1 });
+      expect(report).not.toHaveProperty('observations');
+      expect(readFileSync(join(directory, 'agent-eval-deterministic.md'), 'utf8')).toContain(
+        'SAFETY GATE: PASSED'
+      );
+    } finally {
+      output.mockRestore();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

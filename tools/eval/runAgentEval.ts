@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
@@ -5,6 +6,7 @@ import { config } from 'dotenv';
 import { executeDeterministicScenario } from './deterministicExecutor.js';
 import { loadScenarioCatalog } from './loadScenarios.js';
 import { createModelExecutor } from './modelExecutor.js';
+import { buildReport, writeReportFiles } from './report.js';
 import { aggregateEvaluation } from './scorers.js';
 import type {
   AgentEvalCatalog,
@@ -151,7 +153,33 @@ export async function runCli(args: string[]): Promise<void> {
     throw new Error('live-smoke execution is not configured yet');
   }
   const result = await runEvaluation(catalog, executor, options);
-  console.log(JSON.stringify({ mode: options.mode, output: options.output, aggregate: result.aggregate }, null, 2));
+  const report = buildReport({
+    catalog,
+    observations: result.observations,
+    aggregate: result.aggregate,
+    mode: options.mode,
+    ...(options.mode === 'model' ? { model: 'gemini-3.5-flash-lite' } : {}),
+    repetitions: options.repetitions,
+    command: 'npx tsx tools/eval/runAgentEval.ts ' + args.join(' '),
+    gitCommit: execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim(),
+    nodeVersion: process.version,
+    limitations:
+      options.mode === 'model'
+        ? ['Controlled tools use synthetic fixtures and do not verify a live Medplum deployment.']
+        : ['Model-dependent language quality is reported separately.'],
+  });
+  const reportFiles = writeReportFiles(options.output, report);
+  console.log(
+    JSON.stringify(
+      {
+        mode: options.mode,
+        reportFiles,
+        aggregate: result.aggregate,
+      },
+      null,
+      2
+    )
+  );
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
