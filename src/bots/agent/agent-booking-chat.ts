@@ -13,18 +13,14 @@ import {
 } from './lib/bookingChatTools.js';
 import { createBookingSession, loadBookingSession, persistBookingSession } from './lib/bookingSession.js';
 import type { BookingChatMessage, BookingSession, BookingToolCall } from './lib/bookingSession.js';
+import { runBookingChatLoop } from './lib/bookingChatLoop.js';
+import type { BookingChatLoopResult } from './lib/bookingChatLoop.js';
+export { MAX_TOOL_LOOP_STEPS } from './lib/bookingChatLoop.js';
 import { resolveProposedOptions } from './lib/proposeOptions.js';
-import type { ProposeOptionsArgs } from './lib/proposeOptions.js';
-import type { BookableOption } from './lib/bookableOptions.js';
 
 export type BookingChatInput = { patientId: string; message: string; sessionId?: string };
 
-export type BookingChatResult =
-  | { kind: 'question'; sessionId: string; reply: string }
-  | { kind: 'options'; sessionId: string; options: BookableOption[]; summaryCommunicationId: string }
-  | { kind: 'error'; sessionId: string; reply: string };
-
-export const MAX_TOOL_LOOP_STEPS = 8;
+export type BookingChatResult = BookingChatLoopResult;
 
 interface GeminiToolResponse {
   message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
@@ -32,14 +28,17 @@ interface GeminiToolResponse {
 
 type GeminiToolCaller = (transcript: BookingChatMessage[], apiKey: string) => Promise<GeminiToolResponse>;
 
-let geminiToolCaller: GeminiToolCaller = callGeminiWithTools;
+let geminiToolCaller: GeminiToolCaller = callGeminiBookingModel;
 
 /** Test-only seam. */
 export function __setGeminiToolCallerForTests(fn: GeminiToolCaller): void {
   geminiToolCaller = fn;
 }
 
-async function callGeminiWithTools(transcript: BookingChatMessage[], apiKey: string): Promise<GeminiToolResponse> {
+export async function callGeminiBookingModel(
+  transcript: BookingChatMessage[],
+  apiKey: string
+): Promise<GeminiToolResponse> {
   const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -55,10 +54,6 @@ async function callGeminiWithTools(transcript: BookingChatMessage[], apiKey: str
   }
   const body = await response.json();
   return { message: body.choices[0].message };
-}
-
-function toolResultMessage(callId: string, toolName: string, result: unknown): BookingChatMessage {
-  return { role: 'tool', tool_call_id: callId, content: JSON.stringify({ tool: toolName, result }) };
 }
 
 async function writeSummaryCommunication(
@@ -140,91 +135,10 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookingCha
     session = await createBookingSession(medplum, patientId, initialTranscript);
   }
 
-  for (let step = 0; step < MAX_TOOL_LOOP_STEPS; step++) {
-    const response = await geminiToolCaller(session.transcript, apiKey);
-    const toolCalls = response.message.tool_calls ?? [];
-
-    if (toolCalls.length === 0) {
-      session = { ...session, transcript: [...session.transcript, { role: 'assistant', content: response.message.content }] };
-      await persistBookingSession(medplum, session, 'in-progress');
-      return { kind: 'question', sessionId: session.communication.id as string, reply: response.message.content ?? '' };
-    }
-
-    session = { ...session, transcript: [...session.transcript, { role: 'assistant', content: response.message.content, tool_calls: toolCalls }] };
-
-    for (let i = 0; i < toolCalls.length; i++) {
-      const call = toolCalls[i];
-      let args: Record<string, unknown>;
-      try {
-        args = JSON.parse(call.function.arguments) as Record<string, unknown>;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, { error: `Could not parse tool arguments: ${errorMessage}` })] };
-        continue;
-      }
-
-      if (call.function.name === 'ask_clarifying_question') {
-        session = { ...session, transcript: appendSkippedRemainder(session.transcript, toolCalls, i, call, 'ok') };
-        await persistBookingSession(medplum, session, 'in-progress');
-        return { kind: 'question', sessionId: session.communication.id as string, reply: args.question as string };
-      }
-
-      if (call.function.name === 'propose_options') {
-        const resolved = resolveProposedOptions(session.transcript, args as unknown as ProposeOptionsArgs);
-        if (!resolved.ok) {
-          session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, 'propose_options', { error: resolved.errorForModel })] };
-          continue;
-        }
-        if (resolved.reason.trim() === '' || resolved.summary.trim() === '') {
-          session = {
-            ...session,
-            transcript: [
-              ...session.transcript,
-              toolResultMessage(call.id, 'propose_options', { error: 'reason and summary must not be empty' }),
-            ],
-          };
-          continue;
-        }
-        const summaryCommunicationId = await writeSummaryCommunication(medplum, patientId, resolved);
-        session = { ...session, transcript: appendSkippedRemainder(session.transcript, toolCalls, i, call, { ok: true }) };
-        await persistBookingSession(medplum, session, 'in-progress');
-        return { kind: 'options', sessionId: session.communication.id as string, options: resolved.options, summaryCommunicationId };
-      }
-
-      try {
-        const output = await executeReadOnlyTool(medplum, patientId, call.function.name, args, session.transcript);
-        session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, output)] };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        session = { ...session, transcript: [...session.transcript, toolResultMessage(call.id, call.function.name, { error: errorMessage })] };
-      }
-    }
-  }
-
-  // Hitting the step cap without a terminal action (ask_clarifying_question
-  // or propose_options) isn't a dead end — everything the loop already
-  // gathered stays in the transcript. Keep the session in-progress and ask
-  // the patient for more to narrow down, the same as an explicit
-  // ask_clarifying_question, so the next message resumes with that history
-  // intact instead of forcing a full restart.
-  await persistBookingSession(medplum, session, 'in-progress');
-  return {
-    kind: 'question',
-    sessionId: session.communication.id as string,
-    reply: "I'm still narrowing this down — could you tell me a bit more about what you're looking for (like a preferred day, time, or doctor)?",
-  };
-}
-
-function appendSkippedRemainder(
-  transcript: BookingChatMessage[],
-  toolCalls: BookingToolCall[],
-  handledIndex: number,
-  handledCall: BookingToolCall,
-  handledResult: unknown
-): BookingChatMessage[] {
-  const messages = [...transcript, toolResultMessage(handledCall.id, handledCall.function.name, handledResult)];
-  for (let j = handledIndex + 1; j < toolCalls.length; j++) {
-    messages.push(toolResultMessage(toolCalls[j].id, toolCalls[j].function.name, { skipped: true }));
-  }
-  return messages;
+  return runBookingChatLoop(session, {
+    callModel: (transcript) => geminiToolCaller(transcript, apiKey),
+    executeTool: (name, args, transcript) => executeReadOnlyTool(medplum, patientId, name, args, transcript),
+    writeSummary: (resolved) => writeSummaryCommunication(medplum, patientId, resolved),
+    persist: (currentSession, status) => persistBookingSession(medplum, currentSession, status),
+  });
 }
