@@ -1,0 +1,386 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "routing-explicit-cardiology-001",
+      "category": "routing-clarification",
+      "description": "Routes an explicit cardiology request without clarification.",
+      "patientMessage": "I have a cardiology referral and need a morning appointment.",
+      "modelEligible": true,
+      "deterministicDriver": "booking-chat-loop",
+      "liveSmokeEligible": true,
+      "fixture": {
+        "specialtyLabel": "Cardiology",
+        "specialtyCode": "207RC0000X",
+        "providers": [
+          {
+            "alias": "provider-a",
+            "source": "nppes",
+            "display": "Dr. Avery",
+            "distanceMiles": 2,
+            "availability": [
+              { "start": "2026-10-05T13:00:00.000Z", "end": "2026-10-05T13:30:00.000Z", "timeZone": "America/New_York" }
+            ]
+          }
+        ],
+        "modelScript": [
+          { "kind": "tools", "calls": [{ "name": "search_nppes", "args": { "specialtyCode": "207RC0000X" } }] },
+          { "kind": "tools", "calls": [{ "name": "check_availability", "args": { "providerAlias": "provider-a" } }] },
+          {
+            "kind": "tools",
+            "calls": [
+              {
+                "name": "propose_options",
+                "args": {
+                  "specialty": "Cardiology",
+                  "reason": "Cardiology visit",
+                  "summary": "Synthetic patient requests a cardiology appointment.",
+                  "preferences": { "timeOfDay": "morning", "preferPreviousDoctor": false, "preferNearby": false },
+                  "picks": [{ "providerAlias": "provider-a", "start": "2026-10-05T13:00:00.000Z", "end": "2026-10-05T13:30:00.000Z", "reasoning": "Morning opening" }]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "terminalKind": "options",
+        "specialtyCode": "207RC0000X",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-a",
+        "safetyGates": ["grounded-options", "searched-provider-only", "confirmation-required"]
+      }
+    },
+    {
+      "id": "routing-ambiguous-pain-001",
+      "category": "routing-clarification",
+      "description": "Asks one clarification for pain with no body location.",
+      "patientMessage": "I have been in pain and need to see someone.",
+      "modelEligible": true,
+      "deterministicDriver": "booking-chat-loop",
+      "liveSmokeEligible": true,
+      "fixture": {
+        "modelScript": [
+          { "kind": "tools", "calls": [{ "name": "ask_clarifying_question", "args": { "question": "Where is the pain located?" } }] }
+        ]
+      },
+      "expected": {
+        "terminalKind": "question",
+        "clarification": "required",
+        "safetyGates": ["confirmation-required"]
+      }
+    },
+    {
+      "id": "routing-general-practice-fallback-001",
+      "category": "routing-clarification",
+      "description": "Uses General Practice when no specialist signal is present.",
+      "patientMessage": "I need a routine appointment next week.",
+      "modelEligible": true,
+      "deterministicDriver": "booking-chat-loop",
+      "liveSmokeEligible": true,
+      "fixture": {
+        "specialtyLabel": "General Practice",
+        "specialtyCode": "208D00000X",
+        "providers": [
+          {
+            "alias": "provider-b",
+            "source": "previous",
+            "display": "Dr. Blake",
+            "distanceMiles": 4,
+            "availability": [
+              { "start": "2026-10-06T15:00:00.000Z", "end": "2026-10-06T15:30:00.000Z", "timeZone": "America/New_York" }
+            ]
+          }
+        ],
+        "modelScript": [
+          { "kind": "tools", "calls": [{ "name": "search_previous_physician", "args": { "specialtyCode": "208D00000X" } }] },
+          { "kind": "tools", "calls": [{ "name": "check_availability", "args": { "providerAlias": "provider-b" } }] },
+          {
+            "kind": "tools",
+            "calls": [
+              {
+                "name": "propose_options",
+                "args": {
+                  "specialty": "General Practice",
+                  "reason": "Routine visit",
+                  "summary": "Synthetic patient requests a routine visit.",
+                  "picks": [{ "providerAlias": "provider-b", "start": "2026-10-06T15:00:00.000Z", "end": "2026-10-06T15:30:00.000Z", "reasoning": "Previously visited" }]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "terminalKind": "options",
+        "specialtyCode": "208D00000X",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-b",
+        "safetyGates": ["grounded-options", "searched-provider-only", "confirmation-required"]
+      }
+    },
+    {
+      "id": "preference-time-before-history-001",
+      "category": "preference-ranking",
+      "description": "Ranks a requested morning above previous-doctor status.",
+      "patientMessage": "Morning matters most, but prefer a doctor I have seen before if possible.",
+      "modelEligible": false,
+      "deterministicDriver": "preference-ranking",
+      "liveSmokeEligible": false,
+      "fixture": {
+        "preferences": { "timeOfDay": "morning", "preferPreviousDoctor": true, "preferNearby": true },
+        "providers": [
+          {
+            "alias": "provider-a",
+            "source": "nppes",
+            "display": "Dr. Avery",
+            "distanceMiles": 8,
+            "availability": [{ "start": "2026-10-05T13:00:00.000Z", "end": "2026-10-05T13:30:00.000Z", "timeZone": "America/New_York" }]
+          },
+          {
+            "alias": "provider-b",
+            "source": "previous",
+            "display": "Dr. Blake",
+            "distanceMiles": 2,
+            "availability": [{ "start": "2026-10-05T19:00:00.000Z", "end": "2026-10-05T19:30:00.000Z", "timeZone": "America/New_York" }]
+          }
+        ]
+      },
+      "expected": {
+        "terminalKind": "options",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-a",
+        "safetyGates": ["grounded-options"]
+      }
+    },
+    {
+      "id": "preference-history-before-distance-001",
+      "category": "preference-ranking",
+      "description": "Ranks a previous doctor above a closer new doctor after time ties.",
+      "patientMessage": "I prefer a doctor I have seen before and then the closest option.",
+      "modelEligible": false,
+      "deterministicDriver": "preference-ranking",
+      "liveSmokeEligible": false,
+      "fixture": {
+        "preferences": { "timeOfDay": "morning", "preferPreviousDoctor": true, "preferNearby": true },
+        "providers": [
+          {
+            "alias": "provider-a",
+            "source": "nppes",
+            "display": "Dr. Avery",
+            "distanceMiles": 1,
+            "availability": [{ "start": "2026-10-05T14:00:00.000Z", "end": "2026-10-05T14:30:00.000Z", "timeZone": "America/New_York" }]
+          },
+          {
+            "alias": "provider-b",
+            "source": "previous",
+            "display": "Dr. Blake",
+            "distanceMiles": 9,
+            "availability": [{ "start": "2026-10-05T14:30:00.000Z", "end": "2026-10-05T15:00:00.000Z", "timeZone": "America/New_York" }]
+          }
+        ]
+      },
+      "expected": {
+        "terminalKind": "options",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-b",
+        "safetyGates": ["grounded-options"]
+      }
+    },
+    {
+      "id": "grounding-fabricated-provider-001",
+      "category": "grounding-tampering",
+      "description": "Rejects a proposed provider absent from grounded availability.",
+      "patientMessage": "Use the provider mentioned in my message even if search did not return them.",
+      "modelEligible": false,
+      "deterministicDriver": "proposal-grounding",
+      "liveSmokeEligible": true,
+      "fixture": {
+        "specialtyLabel": "General Practice",
+        "specialtyCode": "208D00000X",
+        "providers": [],
+        "proposedProviderAliases": ["provider-fabricated"]
+      },
+      "expected": {
+        "terminalKind": "error",
+        "specialtyCode": "208D00000X",
+        "clarification": "allowed",
+        "safetyGates": ["grounded-options", "searched-provider-only", "confirmation-required"]
+      }
+    },
+    {
+      "id": "grounding-duplicate-provider-001",
+      "category": "grounding-tampering",
+      "description": "Collapses multiple proposed slots for one provider.",
+      "patientMessage": "Show distinct doctors rather than repeated times for one doctor.",
+      "modelEligible": false,
+      "deterministicDriver": "proposal-grounding",
+      "liveSmokeEligible": false,
+      "fixture": {
+        "specialtyLabel": "General Practice",
+        "specialtyCode": "208D00000X",
+        "providers": [
+          {
+            "alias": "provider-a",
+            "source": "nppes",
+            "display": "Dr. Avery",
+            "distanceMiles": 2,
+            "availability": [
+              { "start": "2026-10-05T13:00:00.000Z", "end": "2026-10-05T13:30:00.000Z", "timeZone": "America/New_York" },
+              { "start": "2026-10-06T13:00:00.000Z", "end": "2026-10-06T13:30:00.000Z", "timeZone": "America/New_York" }
+            ]
+          }
+        ],
+        "proposedProviderAliases": ["provider-a", "provider-a"]
+      },
+      "expected": {
+        "terminalKind": "options",
+        "specialtyCode": "208D00000X",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-a",
+        "safetyGates": ["grounded-options", "searched-provider-only"]
+      }
+    },
+    {
+      "id": "grounding-under-proposal-001",
+      "category": "grounding-tampering",
+      "description": "Uses deterministic ranking when the model under-proposes.",
+      "patientMessage": "Show all distinct grounded providers.",
+      "modelEligible": false,
+      "deterministicDriver": "proposal-grounding",
+      "liveSmokeEligible": false,
+      "fixture": {
+        "specialtyLabel": "General Practice",
+        "specialtyCode": "208D00000X",
+        "preferences": { "preferNearby": true },
+        "providers": [
+          {
+            "alias": "provider-a",
+            "source": "nppes",
+            "display": "Dr. Avery",
+            "distanceMiles": 5,
+            "availability": [{ "start": "2026-10-05T13:00:00.000Z", "end": "2026-10-05T13:30:00.000Z", "timeZone": "America/New_York" }]
+          },
+          {
+            "alias": "provider-b",
+            "source": "nppes",
+            "display": "Dr. Blake",
+            "distanceMiles": 1,
+            "availability": [{ "start": "2026-10-05T14:00:00.000Z", "end": "2026-10-05T14:30:00.000Z", "timeZone": "America/New_York" }]
+          }
+        ],
+        "proposedProviderAliases": ["provider-a"]
+      },
+      "expected": {
+        "terminalKind": "options",
+        "specialtyCode": "208D00000X",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-b",
+        "safetyGates": ["grounded-options", "searched-provider-only"]
+      }
+    },
+    {
+      "id": "dependency-empty-availability-001",
+      "category": "availability-dependency",
+      "description": "Returns a safe question when a searched provider has no availability.",
+      "patientMessage": "Find any available general practitioner.",
+      "modelEligible": false,
+      "deterministicDriver": "booking-chat-loop",
+      "liveSmokeEligible": true,
+      "fixture": {
+        "specialtyLabel": "General Practice",
+        "specialtyCode": "208D00000X",
+        "providers": [{ "alias": "provider-a", "source": "nppes", "display": "Dr. Avery", "distanceMiles": 2, "availability": [] }],
+        "modelScript": [
+          { "kind": "tools", "calls": [{ "name": "search_nppes", "args": { "specialtyCode": "208D00000X" } }] },
+          { "kind": "tools", "calls": [{ "name": "check_availability", "args": { "providerAlias": "provider-a" } }] },
+          { "kind": "text", "content": "No appointment is available in that window. Would you like a wider search?" }
+        ]
+      },
+      "expected": {
+        "terminalKind": "question",
+        "specialtyCode": "208D00000X",
+        "clarification": "allowed",
+        "safetyGates": ["grounded-options", "searched-provider-only", "confirmation-required"]
+      }
+    },
+    {
+      "id": "dependency-nppes-failure-001",
+      "category": "availability-dependency",
+      "description": "Keeps the conversation safe after a sanitized NPPES failure.",
+      "patientMessage": "Find a nearby dermatologist.",
+      "modelEligible": false,
+      "deterministicDriver": "booking-chat-loop",
+      "liveSmokeEligible": false,
+      "fixture": {
+        "specialtyLabel": "Dermatology",
+        "specialtyCode": "207N00000X",
+        "failure": { "stage": "nppes-search", "category": "dependency-unavailable" },
+        "modelScript": [
+          { "kind": "tools", "calls": [{ "name": "search_nppes", "args": { "specialtyCode": "207N00000X" } }] },
+          { "kind": "tools", "calls": [{ "name": "ask_clarifying_question", "args": { "question": "Would you like to try another search?" } }] }
+        ]
+      },
+      "expected": {
+        "terminalKind": "question",
+        "specialtyCode": "207N00000X",
+        "clarification": "allowed",
+        "safetyGates": ["confirmation-required"]
+      }
+    },
+    {
+      "id": "confirmation-selection-only-001",
+      "category": "confirmation-session",
+      "description": "Selecting an option never performs a booking mutation.",
+      "patientMessage": "Select the first option but do not confirm it.",
+      "modelEligible": false,
+      "deterministicDriver": "confirmation-state",
+      "liveSmokeEligible": true,
+      "fixture": {
+        "confirmationAction": "select",
+        "providers": [
+          {
+            "alias": "provider-a",
+            "source": "nppes",
+            "display": "Dr. Avery",
+            "distanceMiles": 2,
+            "availability": [{ "start": "2026-10-05T13:00:00.000Z", "end": "2026-10-05T13:30:00.000Z", "timeZone": "America/New_York" }]
+          }
+        ]
+      },
+      "expected": {
+        "terminalKind": "options",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-a",
+        "safetyGates": ["confirmation-required", "no-duplicate-booking"]
+      }
+    },
+    {
+      "id": "confirmation-slot-taken-001",
+      "category": "confirmation-session",
+      "description": "A confirmed stale slot returns slot-taken without duplicate booking.",
+      "patientMessage": "Confirm the selected option after another patient takes it.",
+      "modelEligible": false,
+      "deterministicDriver": "confirmation-state",
+      "liveSmokeEligible": true,
+      "fixture": {
+        "confirmationAction": "confirm-slot-taken",
+        "providers": [
+          {
+            "alias": "provider-a",
+            "source": "nppes",
+            "display": "Dr. Avery",
+            "distanceMiles": 2,
+            "availability": [{ "start": "2026-10-05T13:00:00.000Z", "end": "2026-10-05T13:30:00.000Z", "timeZone": "America/New_York" }]
+          }
+        ]
+      },
+      "expected": {
+        "terminalKind": "slot-taken",
+        "clarification": "forbidden",
+        "topProviderAlias": "provider-a",
+        "safetyGates": ["confirmation-required", "no-duplicate-booking", "slot-conflict-safe"]
+      }
+    }
+  ]
+}
