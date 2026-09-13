@@ -32,7 +32,7 @@ describe('callGeminiBookingModel', () => {
     await resultPromise;
   });
 
-  test('allows four bounded 429 retries before returning a fifth-attempt completion', async () => {
+  test('uses a minute-scale final backoff before returning a fifth-attempt completion', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const fetchMock = vi
@@ -56,6 +56,8 @@ describe('callGeminiBookingModel', () => {
     ).resolves.toEqual({ message: { role: 'assistant', content: 'Recovered response' } });
 
     await vi.advanceTimersByTimeAsync(15_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(66_000);
     await resultPromise;
   });
 
@@ -69,7 +71,7 @@ describe('callGeminiBookingModel', () => {
       callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
     ).rejects.toThrow('Gemini request failed: 429');
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(81_000);
     await resultPromise;
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });

@@ -26,7 +26,7 @@ interface GeminiToolResponse {
   message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
 }
 
-const GEMINI_429_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000] as const;
+const GEMINI_429_RETRY_DELAYS_MS = [1_000, 4_000, 16_000, 60_000] as const;
 
 type GeminiToolCaller = (transcript: BookingChatMessage[], apiKey: string) => Promise<GeminiToolResponse>;
 
