@@ -1,0 +1,76 @@
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { callGeminiBookingModel } from './agent-booking-chat';
+
+describe('callGeminiBookingModel', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  test('retries a transient 429 response and returns the next successful completion', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'Synthetic response' } }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultPromise = expect(
+      callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
+    ).resolves.toEqual({ message: { role: 'assistant', content: 'Synthetic response' } });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await resultPromise;
+  });
+
+  test('allows four bounded 429 retries before returning a fifth-attempt completion', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'Recovered response' } }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultPromise = expect(
+      callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
+    ).resolves.toEqual({ message: { role: 'assistant', content: 'Recovered response' } });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await resultPromise;
+  });
+
+  test('stops after four 429 retries instead of retrying indefinitely', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultPromise = expect(
+      callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
+    ).rejects.toThrow('Gemini request failed: 429');
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await resultPromise;
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+});

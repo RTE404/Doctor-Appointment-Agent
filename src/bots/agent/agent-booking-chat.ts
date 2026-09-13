@@ -26,6 +26,8 @@ interface GeminiToolResponse {
   message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
 }
 
+const GEMINI_429_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000] as const;
+
 type GeminiToolCaller = (transcript: BookingChatMessage[], apiKey: string) => Promise<GeminiToolResponse>;
 
 let geminiToolCaller: GeminiToolCaller = callGeminiBookingModel;
@@ -39,21 +41,29 @@ export async function callGeminiBookingModel(
   transcript: BookingChatMessage[],
   apiKey: string
 ): Promise<GeminiToolResponse> {
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gemini-3.5-flash-lite',
-      temperature: 0,
-      messages: transcript,
-      tools: BOOKING_CHAT_TOOL_SCHEMAS,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`Gemini request failed: ${response.status}`);
+  for (let attempt = 0; attempt <= GEMINI_429_RETRY_DELAYS_MS.length; attempt += 1) {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-3.5-flash-lite',
+        temperature: 0,
+        messages: transcript,
+        tools: BOOKING_CHAT_TOOL_SCHEMAS,
+      }),
+    });
+    if (response.ok) {
+      const body = await response.json();
+      return { message: body.choices[0].message };
+    }
+    if (response.status !== 429 || attempt === GEMINI_429_RETRY_DELAYS_MS.length) {
+      throw new Error(`Gemini request failed: ${response.status}`);
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, GEMINI_429_RETRY_DELAYS_MS[attempt] + Math.random() * 250)
+    );
   }
-  const body = await response.json();
-  return { message: body.choices[0].message };
+  throw new Error('Gemini request retry loop exhausted');
 }
 
 async function writeSummaryCommunication(
