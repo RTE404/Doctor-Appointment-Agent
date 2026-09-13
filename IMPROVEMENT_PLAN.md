@@ -1,7 +1,7 @@
 # Improvement Plan
 
-**Status:** Phase 1 local implementation complete. The deterministic baseline is verified; the paid Gemini baseline and
-external Medplum smoke remain pending explicit authorization.
+**Status:** Phase 1 deterministic and Gemini model baselines are verified. The external Medplum smoke remains blocked by
+missing scoped demo browser and worker credentials.
 
 **Approved scope:** Implement the following three improvements, one at a time, in this order:
 
@@ -60,10 +60,16 @@ baseline; Phase 1 and Phase 2 will establish them.
 - Complete: privacy-safe JSON/Markdown report generation and an eight-scenario, run-tagged live-smoke implementation.
 - Verified: the deterministic report is byte-stable across two runs and passes 120/120 scenarios; see
   docs/metrics/agent-eval-baseline.md.
-- Verified: 58 focused evaluation tests, the complete 385-test repository suite, API ESM compilation, lint, and the
+- Verified: 61 focused evaluation and retry tests, the complete 388-test repository suite, API ESM compilation, lint, and the
   production build pass.
-- Pending external execution: the Gemini model baseline and live Medplum smoke. Neither result is claimed until the
-  corresponding command is explicitly authorized and succeeds.
+- Verified external model execution: 40 eligible Gemini scenarios ran three times each for 120/120 task success, 90/90
+  applicable routing and grounded-option checks, zero confirmation or unauthorized-booking violations, and a passing
+  controlled-model safety gate.
+- Verified external failure boundary: after explicit authorization, the live Medplum smoke stopped before login or any
+  resource request because all four scoped `DEMO_MEDPLUM_*` browser and worker credentials were missing. No remote
+  resource was created, no cleanup was required, and no live-integration pass is claimed.
+- Hardened the direct Gemini REST caller against the observed intermittent HTTP 429 window with four bounded retries and
+  test-covered 1, 4, 16, and 60 second backoffs plus small jitter.
 
 ### Goal
 
