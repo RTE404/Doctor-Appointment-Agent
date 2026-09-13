@@ -59,9 +59,9 @@ export async function callGeminiBookingModel(
     if (response.status !== 429 || attempt === GEMINI_429_RETRY_DELAYS_MS.length) {
       throw new Error(`Gemini request failed: ${response.status}`);
     }
-    await new Promise((resolve) =>
-      setTimeout(resolve, GEMINI_429_RETRY_DELAYS_MS[attempt] + Math.random() * 250)
-    );
+    await new Promise((resolve) => {
+      setTimeout(resolve, GEMINI_429_RETRY_DELAYS_MS[attempt] + Math.random() * 250);
+    });
   }
   throw new Error('Gemini request retry loop exhausted');
 }
