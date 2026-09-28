@@ -56,6 +56,7 @@ describe('createModelExecutor', () => {
       return response;
     });
     const executor = createModelExecutor({ apiKey: 'test-only', concurrency: 1, callModel });
+    const expectedModelCalls = responses.length;
 
     const result = await executor.execute(scenario, 1);
 
@@ -64,6 +65,8 @@ describe('createModelExecutor', () => {
     expect(result.terminalKind).toBe('options');
     expect(result.toolNames).toEqual(['search_nppes', 'check_availability', 'propose_options']);
     expect(result.displayedOptions[0].providerAlias).toBe('provider-a');
+    expect(result.telemetry?.stages.some((stage) => stage.stage === 'model.call')).toBe(true);
+    expect(result.telemetry?.modelCalls.length).toBe(expectedModelCalls);
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain(scenario.patientMessage);
     expect(serialized).not.toContain('Private model rationale');

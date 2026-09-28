@@ -1,6 +1,7 @@
 import type { Communication } from '@medplum/fhirtypes';
 
 import { callGeminiBookingModel } from '../../src/bots/agent/agent-booking-chat.js';
+import { createAgentTelemetry } from '../../src/bots/agent/lib/agentTelemetry.js';
 import { runBookingChatLoop } from '../../src/bots/agent/lib/bookingChatLoop.js';
 import type { BookingChatModelResponse, BookingChatTraceEvent } from '../../src/bots/agent/lib/bookingChatLoop.js';
 import type { BookableOption } from '../../src/bots/agent/lib/bookableOptions.js';
@@ -92,6 +93,7 @@ async function executeModelScenario(
   const available = new Map<string, BookableOption>();
   const trace: BookingChatTraceEvent[] = [];
   let specialtyCode: string | undefined;
+  const telemetry = createAgentTelemetry();
 
   const result = await runBookingChatLoop(
     {
@@ -146,6 +148,7 @@ async function executeModelScenario(
       },
       persist: async () => undefined,
       onTrace: (event) => trace.push(event),
+      telemetry,
     }
   );
 
@@ -177,6 +180,7 @@ async function executeModelScenario(
     slotConflictRejected: false,
     sessionResumed: false,
     sanitizedErrorCategory: stepCap ? 'step-cap' : undefined,
+    telemetry: telemetry.snapshot(),
   };
 }
 

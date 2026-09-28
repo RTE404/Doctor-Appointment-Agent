@@ -10,6 +10,8 @@ import {
   renderReportMarkdown,
   writeReportFiles,
 } from './report';
+import type { BuildReportInput } from './report';
+import { summarizePerformance } from './performance';
 import { aggregateEvaluation } from './scorers';
 import type { AgentEvalCatalog, AgentEvalObservation } from './types';
 
@@ -73,13 +75,13 @@ function observation(scenarioId: string, terminalKind: AgentEvalObservation['ter
   };
 }
 
-function makeReport() {
+function makeReportInput(): { observations: AgentEvalObservation[]; input: BuildReportInput } {
   const observations = [observation('case-b', 'booked'), observation('case-a', 'error')];
   const runs = observations.map((observed) => ({
     scenario: catalog.scenarios.find((scenario) => scenario.id === observed.scenarioId)!,
     observation: observed,
   }));
-  return buildReport({
+  const input: BuildReportInput = {
     catalog,
     observations,
     aggregate: aggregateEvaluation(runs),
@@ -89,7 +91,12 @@ function makeReport() {
     gitCommit: 'abc1234',
     nodeVersion: 'v22.0.0',
     limitations: ['Model evaluation not run.'],
-  });
+  };
+  return { observations, input };
+}
+
+function makeReport() {
+  return buildReport(makeReportInput().input);
 }
 
 describe('evaluation report', () => {
@@ -145,5 +152,34 @@ describe('evaluation report', () => {
     report.limitations = ['Bearer PRIVATE_EVAL_CONTENT'];
     expect(() => writeReportFiles(directory, report)).toThrow('Unsafe evaluation report value');
     expect(readFileSync(paths.json, 'utf8')).toBe('keep-existing');
+  });
+
+  it('includes a performance section when supplied and keeps it privacy-safe', () => {
+    const { observations, input } = makeReportInput();
+    const performance = summarizePerformance(
+      [
+        {
+          ...observations[0],
+          telemetry: {
+            stages: [{ stage: 'model.call', durationMs: 120, outcome: 'ok' }],
+            modelCalls: [{ promptTokens: 10, completionTokens: 2, totalTokens: 12, retries: 0 }],
+          },
+        },
+      ],
+      { version: 1, models: { 'gemini-3.5-flash-lite': { inputPerMillionUsd: 0.3, outputPerMillionUsd: 2.5, source: 'fixture', retrievedOn: '2026-09-28' } } },
+      'gemini-3.5-flash-lite'
+    );
+    const report = buildReport({ ...input, performance });
+
+    expect(report.performance?.stages['model.call'].p50).toBe(120);
+    const markdown = renderReportMarkdown(report);
+    expect(markdown).toContain('## Performance');
+    expect(markdown).toContain('| model.call | 1 | 120 | 120 | 120 | yes |');
+    expect(markdown).toContain('Low-sample stages (fewer than 20 turns) are labeled');
+  });
+
+  it('omits the performance section when absent', () => {
+    const { input } = makeReportInput();
+    expect(renderReportMarkdown(buildReport(input))).not.toContain('## Performance');
   });
 });

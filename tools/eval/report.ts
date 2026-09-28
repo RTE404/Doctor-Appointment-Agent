@@ -2,6 +2,7 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { scoreScenario } from './scorers.js';
+import type { DurationSummary, PerformanceSummary } from './performance.js';
 import type {
   AgentEvalCatalog,
   AgentEvalObservation,
@@ -22,6 +23,7 @@ export interface AgentEvalReport {
   gitCommit: string;
   nodeVersion: string;
   limitations: string[];
+  performance?: PerformanceSummary;
 }
 
 export interface BuildReportInput {
@@ -35,6 +37,7 @@ export interface BuildReportInput {
   gitCommit: string;
   nodeVersion: string;
   limitations: string[];
+  performance?: PerformanceSummary;
 }
 
 const FORBIDDEN_KEYS = new Set([
@@ -110,6 +113,7 @@ export function buildReport(input: BuildReportInput): AgentEvalReport {
     gitCommit: input.gitCommit,
     nodeVersion: input.nodeVersion,
     limitations: [...input.limitations],
+    ...(input.performance ? { performance: input.performance } : {}),
   };
   assertReportIsSafe(report);
   return report;
@@ -169,12 +173,75 @@ export function renderReportMarkdown(report: AgentEvalReport): string {
       ? ['None.']
       : report.failures.map((failure) => `- ${failure.scenarioId}: ${failure.failedChecks.join(', ')}`)),
     '',
+    ...(report.performance ? renderPerformance(report.performance) : []),
     '## Limitations',
     '',
     ...(report.limitations.length === 0 ? ['None recorded.'] : report.limitations.map((item) => `- ${item}`)),
     '',
   ];
   return lines.join('\n');
+}
+
+function formatMs(value: number | null): string {
+  return value === null ? 'N/A' : String(Math.round(value));
+}
+
+function durationRows(summaries: Record<string, DurationSummary>): string[] {
+  return Object.entries(summaries).map(
+    ([stage, s]) => `| ${stage} | ${s.count} | ${formatMs(s.p50)} | ${formatMs(s.p95)} | ${formatMs(s.max)} | ${s.lowSample ? 'yes' : 'no'} |`
+  );
+}
+
+function formatNumber(value: number | null, digits = 1): string {
+  return value === null ? 'N/A' : value.toFixed(digits);
+}
+
+function renderPerformance(performance: PerformanceSummary): string[] {
+  const header = ['| Stage | Turns | p50 ms | p95 ms | Max ms | Low sample |', '| --- | ---: | ---: | ---: | ---: | :---: |'];
+  const cost = performance.cost.status === 'priced'
+    ? [
+        `- Pricing: ${performance.cost.model}, source ${performance.cost.source}, retrieved ${performance.cost.retrievedOn}`,
+        `- Mean cost per turn: $${formatNumber(performance.cost.meanUsdPerTurn, 6)}`,
+        `- Mean cost per options turn: $${formatNumber(performance.cost.meanUsdPerOptionsTurn, 6)}`,
+        `- Mean cost per completed booking: $${formatNumber(performance.cost.meanUsdPerCompletedBooking, 6)}`,
+      ]
+    : [`- Cost unavailable: ${performance.cost.reason}`];
+  return [
+    '## Performance',
+    '',
+    `Measured turns: ${performance.measuredTurns}. Stage values are per-turn sums. Low-sample stages (fewer than 20 turns) are labeled.`,
+    '',
+    '### Warm stages',
+    '',
+    ...header,
+    ...durationRows(performance.stages),
+    '',
+    ...(Object.keys(performance.coldStages).length > 0
+      ? ['### Cold stages', '', ...header, ...durationRows(performance.coldStages), '']
+      : []),
+    '### Turn and booking totals',
+    '',
+    ...header,
+    ...durationRows({
+      'model.call (per call)': performance.modelCallLatency,
+      'turn.total (question)': performance.turnTotalByTerminal.question,
+      'turn.total (options)': performance.turnTotalByTerminal.options,
+      'booking.total': performance.bookingTotal,
+    }),
+    '',
+    '### Efficiency, tokens, and cost',
+    '',
+    `- Mean model calls per turn: ${formatNumber(performance.efficiency.meanModelCalls)}`,
+    `- Mean tool calls per turn: ${formatNumber(performance.efficiency.meanToolCalls)}`,
+    `- Mean loop steps per turn: ${formatNumber(performance.efficiency.meanLoopSteps)}`,
+    `- Loop-step distribution: ${JSON.stringify(performance.efficiency.loopStepDistribution)}`,
+    `- Model calls: ${performance.tokens.modelCalls} (missing usage: ${performance.tokens.callsMissingUsage}); retries: ${performance.retries}`,
+    `- Mean tokens per turn: prompt ${formatNumber(performance.tokens.meanPromptPerTurn, 0)}, output ${formatNumber(performance.tokens.meanOutputPerTurn, 0)}, total ${formatNumber(performance.tokens.meanTotalPerTurn, 0)}`,
+    `- Mean total tokens per options turn: ${formatNumber(performance.tokens.meanTotalPerOptionsTurn, 0)}`,
+    `- Mean total tokens per completed booking: ${formatNumber(performance.tokens.meanTotalPerCompletedBooking, 0)}`,
+    ...cost,
+    '',
+  ];
 }
 
 function replaceAtomically(path: string, content: string): void {

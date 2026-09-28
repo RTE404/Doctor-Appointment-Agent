@@ -7,6 +7,8 @@ import { executeDeterministicScenario } from './deterministicExecutor.js';
 import { createLiveSmokeExecutor } from './liveSmokeExecutor.js';
 import { loadScenarioCatalog } from './loadScenarios.js';
 import { createModelExecutor } from './modelExecutor.js';
+import { summarizePerformance } from './performance.js';
+import { loadPricing } from './pricing.js';
 import { buildReport, writeReportFiles } from './report.js';
 import { aggregateEvaluation } from './scorers.js';
 import type {
@@ -170,12 +172,15 @@ export async function runCli(args: string[]): Promise<void> {
     });
   }
   const result = await runEvaluation(catalog, executor, options);
+  const model = 'gemini-3.5-flash-lite';
+  const performance =
+    options.mode === 'deterministic' ? undefined : summarizePerformance(result.observations, loadPricing(), model);
   const report = buildReport({
     catalog,
     observations: result.observations,
     aggregate: result.aggregate,
     mode: options.mode,
-    ...(options.mode !== 'deterministic' ? { model: 'gemini-3.5-flash-lite' } : {}),
+    ...(options.mode !== 'deterministic' ? { model } : {}),
     repetitions: options.repetitions,
     command: 'npx tsx tools/eval/runAgentEval.ts ' + args.join(' '),
     gitCommit: execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -186,6 +191,7 @@ export async function runCli(args: string[]): Promise<void> {
         : options.mode === 'live-smoke'
           ? ['This is an eight-scenario synthetic integration smoke, not a load test.']
           : ['Model-dependent language quality is reported separately.'],
+    ...(performance ? { performance } : {}),
   });
   const reportFiles = writeReportFiles(options.output, report);
   console.log(
