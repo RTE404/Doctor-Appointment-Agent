@@ -11,6 +11,8 @@ import { rankCandidates } from './ranking.js';
 import { timezoneForState } from './timezones.js';
 import type { BookableOption } from './bookableOptions.js';
 import type { BookingChatMessage } from './bookingSession.js';
+import { noopTelemetry } from './agentTelemetry.js';
+import type { AgentTelemetry } from './agentTelemetry.js';
 
 const NPPES_SEARCH_LIMIT = 15;
 
@@ -228,13 +230,17 @@ function scheduleTimeZone(schedule: Schedule, healthcareServiceId: string, fallb
 export async function checkAvailabilityTool(
   medplum: MedplumClient,
   args: { npi: string; startOffsetDays?: number; windowDays?: number },
-  candidate: FoundCandidate
+  candidate: FoundCandidate,
+  telemetry: AgentTelemetry = noopTelemetry
 ): Promise<BookableOption[]> {
-  const ensured = await ensurePractitionerAndSchedule(medplum, args.npi, candidate);
-  const [practitioner, schedule] = await Promise.all([
-    medplum.readResource('Practitioner', ensured.practitionerId),
-    medplum.readResource('Schedule', ensured.scheduleId),
-  ]);
+  const { ensured, practitioner, schedule } = await telemetry.time('tool.provider-reconcile', async () => {
+    const ensuredResources = await ensurePractitionerAndSchedule(medplum, args.npi, candidate);
+    const [practitionerResource, scheduleResource] = await Promise.all([
+      medplum.readResource('Practitioner', ensuredResources.practitionerId),
+      medplum.readResource('Schedule', ensuredResources.scheduleId),
+    ]);
+    return { ensured: ensuredResources, practitioner: practitionerResource, schedule: scheduleResource };
+  });
   const doctorName = `Dr. ${practitioner.name?.[0]?.given?.[0] ?? ''} ${practitioner.name?.[0]?.family ?? ''}`.trim();
   const timeZone = scheduleTimeZone(schedule, ensured.healthcareServiceId, undefined);
 
@@ -246,7 +252,7 @@ export async function checkAvailabilityTool(
   url.searchParams.set('start', start.toISOString());
   url.searchParams.set('end', end.toISOString());
   url.searchParams.set('_count', '100');
-  const bundle = await medplum.get<Bundle<Appointment>>(url);
+  const bundle = await telemetry.time('tool.find', () => medplum.get<Bundle<Appointment>>(url));
 
   return (bundle.entry ?? []).flatMap(({ resource }) => {
     if (resource?.resourceType !== 'Appointment' || !resource.start || !resource.end) {

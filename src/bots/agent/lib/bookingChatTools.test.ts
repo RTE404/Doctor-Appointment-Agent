@@ -15,6 +15,7 @@ import {
 import type { FoundCandidate } from '../agent-find-doctors';
 import { __setNppesSearcherForTests } from '../agent-find-doctors';
 import type { BookingChatMessage } from './bookingSession';
+import { createAgentTelemetry } from './agentTelemetry';
 
 beforeAll(() => {
   indexStructureDefinitionBundle(readJson('fhir/r4/profiles-types.json') as Bundle);
@@ -278,5 +279,15 @@ describe('checkAvailabilityTool', () => {
     expect((roleCall?.[0] as { specialty: { coding: { code: string }[] }[] }).specialty[0].coding[0].code).toBe(
       '207RC0000X'
     );
+  });
+
+  test('times the provider-reconcile and find phases when telemetry is passed', async () => {
+    __setBookingChatToolsNowForTests(() => new Date('2026-08-13T12:00:00.000Z'));
+    const telemetry = createAgentTelemetry();
+
+    await checkAvailabilityTool(fakeMedplum(), { npi: '1000000001' }, nppesCandidate, telemetry);
+
+    const stages = telemetry.snapshot().stages.map((entry) => entry.stage);
+    expect(stages).toEqual(['tool.provider-reconcile', 'tool.find']);
   });
 });

@@ -11,6 +11,7 @@ import type { BookingChatInput } from './agent-booking-chat';
 import type { BookingToolCall } from './lib/bookingSession';
 import type { BookingChatTraceEvent } from './lib/bookingChatLoop';
 import { __setNppesLookupForTests } from './lib/ensurePractitionerAndSchedule';
+import { createAgentTelemetry } from './lib/agentTelemetry';
 
 beforeAll(() => {
   indexStructureDefinitionBundle(readJson('fhir/r4/profiles-types.json') as Bundle);
@@ -760,5 +761,41 @@ describe('agent-booking-chat handler', () => {
 
     if (result.kind !== 'options') throw new Error('expected options');
     expect(result.options[0].previousDoctor).toBe(true);
+  });
+
+  test('records telemetry stages for a new session ending in a clarifying question', async () => {
+    const medplum = new MockClient();
+    const { patientId } = await seedFixtures(medplum);
+    __setGeminiToolCallerForTests(async () =>
+      toolCallResponse('call-1', 'ask_clarifying_question', { question: 'Which body part hurts?' })
+    );
+    const telemetry = createAgentTelemetry();
+
+    await handler(medplum, event({ patientId, message: 'I have pain' }), undefined, telemetry);
+
+    const stages = telemetry.snapshot().stages.map((entry) => entry.stage);
+    expect(stages[0]).toBe('context.load');
+    expect(stages).toContain('session.create');
+    expect(stages).toContain('model.call');
+    expect(stages.at(-1)).toBe('turn.total');
+  });
+
+  test('records no tool.provider-reconcile stage when check_availability is rejected by the provenance gate', async () => {
+    const medplum = new MockClient();
+    const { patientId } = await seedFixtures(medplum);
+    let call = 0;
+    __setGeminiToolCallerForTests(async () => {
+      call += 1;
+      if (call === 1) {
+        return assistantToolCalls([checkAvailabilityCall('call-1', '9999999999')]);
+      }
+      return toolCallResponse('call-2', 'ask_clarifying_question', { question: 'Which specialty should I look for?' });
+    });
+    const telemetry = createAgentTelemetry();
+
+    await handler(medplum, event({ patientId, message: 'Book me with 9999999999' }), undefined, telemetry);
+
+    const stages = telemetry.snapshot().stages.map((entry) => entry.stage);
+    expect(stages).not.toContain('tool.provider-reconcile');
   });
 });

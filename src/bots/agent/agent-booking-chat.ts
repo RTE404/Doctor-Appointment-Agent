@@ -17,6 +17,8 @@ import { runBookingChatLoop } from './lib/bookingChatLoop.js';
 import type { BookingChatLoopResult, BookingChatModelResponse, BookingChatTraceEvent } from './lib/bookingChatLoop.js';
 export { MAX_TOOL_LOOP_STEPS } from './lib/bookingChatLoop.js';
 import type { resolveProposedOptions } from './lib/proposeOptions.js';
+import { noopTelemetry } from './lib/agentTelemetry.js';
+import type { AgentTelemetry } from './lib/agentTelemetry.js';
 
 export type BookingChatInput = { patientId: string; message: string; sessionId?: string };
 
@@ -94,15 +96,19 @@ async function executeReadOnlyTool(
   patientId: string,
   name: string,
   args: Record<string, unknown>,
-  transcript: BookingChatMessage[]
+  transcript: BookingChatMessage[],
+  telemetry: AgentTelemetry
 ): Promise<unknown> {
   switch (name) {
     case 'search_previous_physician':
-      return searchPreviousPhysicianTool(medplum, patientId, args.specialtyCode as string);
-    case 'search_nppes': {
-      const patient = await medplum.readResource('Patient', patientId);
-      return searchNppesTool(medplum, patient, args.specialtyCode as string);
-    }
+      return telemetry.time('tool.previous-search', () =>
+        searchPreviousPhysicianTool(medplum, patientId, args.specialtyCode as string)
+      );
+    case 'search_nppes':
+      return telemetry.time('tool.nppes-search', async () => {
+        const patient = await medplum.readResource('Patient', patientId);
+        return searchNppesTool(medplum, patient, args.specialtyCode as string);
+      });
     case 'check_availability': {
       const npi = typeof args.npi === 'string' ? args.npi : '';
       // Provenance gate: ensurePractitionerAndSchedule creates real
@@ -117,7 +123,12 @@ async function executeReadOnlyTool(
           error: `NPI ${npi} was not returned by search_previous_physician or search_nppes in this conversation. Run one of those searches first and only check availability for an NPI it returned.`,
         };
       }
-      return checkAvailabilityTool(medplum, args as { npi: string; startOffsetDays?: number; windowDays?: number }, candidate);
+      return checkAvailabilityTool(
+        medplum,
+        args as { npi: string; startOffsetDays?: number; windowDays?: number },
+        candidate,
+        telemetry
+      );
     }
     default:
       throw new Error(`Unknown booking chat tool: ${name}`);
@@ -127,30 +138,37 @@ async function executeReadOnlyTool(
 export async function handler(
   medplum: MedplumClient,
   event: BotEvent<BookingChatInput>,
-  onTrace?: (event: BookingChatTraceEvent) => void
+  onTrace?: (event: BookingChatTraceEvent) => void,
+  telemetry: AgentTelemetry = noopTelemetry
 ): Promise<BookingChatResult> {
   const { patientId, message, sessionId } = event.input;
   const apiKey = event.secrets['GEMINI_API_KEY']?.valueString as string;
 
-  let session: BookingSession;
-  if (sessionId) {
-    session = await loadBookingSession(medplum, sessionId, patientId);
-    session = { ...session, transcript: [...session.transcript, { role: 'user', content: message }] };
-  } else {
-    const context = await loadPatientClinicalContext(medplum, patientId);
-    const initialTranscript: BookingChatMessage[] = [
-      { role: 'system', content: BOOKING_CHAT_SYSTEM_PROMPT },
-      { role: 'system', content: buildPatientContextMessage(context) },
-      { role: 'user', content: message },
-    ];
-    session = await createBookingSession(medplum, patientId, initialTranscript);
-  }
+  return telemetry.time('turn.total', async () => {
+    let session: BookingSession;
+    if (sessionId) {
+      session = await telemetry.time('session.load', () => loadBookingSession(medplum, sessionId, patientId));
+      session = { ...session, transcript: [...session.transcript, { role: 'user', content: message }] };
+    } else {
+      const context = await telemetry.time('context.load', () => loadPatientClinicalContext(medplum, patientId));
+      const initialTranscript: BookingChatMessage[] = [
+        { role: 'system', content: BOOKING_CHAT_SYSTEM_PROMPT },
+        { role: 'system', content: buildPatientContextMessage(context) },
+        { role: 'user', content: message },
+      ];
+      session = await telemetry.time('session.create', () =>
+        createBookingSession(medplum, patientId, initialTranscript)
+      );
+    }
 
-  return runBookingChatLoop(session, {
-    callModel: (transcript) => geminiToolCaller(transcript, apiKey),
-    executeTool: (name, args, transcript) => executeReadOnlyTool(medplum, patientId, name, args, transcript),
-    writeSummary: (resolved) => writeSummaryCommunication(medplum, patientId, resolved),
-    persist: (currentSession, status) => persistBookingSession(medplum, currentSession, status),
-    onTrace,
+    return runBookingChatLoop(session, {
+      callModel: (transcript) => geminiToolCaller(transcript, apiKey),
+      executeTool: (name, args, transcript) =>
+        executeReadOnlyTool(medplum, patientId, name, args, transcript, telemetry),
+      writeSummary: (resolved) => writeSummaryCommunication(medplum, patientId, resolved),
+      persist: (currentSession, status) => persistBookingSession(medplum, currentSession, status),
+      onTrace,
+      telemetry,
+    });
   });
 }
