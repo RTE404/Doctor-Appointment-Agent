@@ -105,6 +105,8 @@ export interface EvalObservedOption {
   matchesRequestedTime?: boolean;
 }
 
+import type { TelemetrySnapshot } from '../../src/bots/agent/lib/agentTelemetry.js';
+
 export interface AgentEvalObservation {
   scenarioId: string;
   mode: 'deterministic' | 'model' | 'live-smoke';
@@ -125,6 +127,9 @@ export interface AgentEvalObservation {
   slotConflictRejected: boolean;
   sessionResumed: boolean;
   sanitizedErrorCategory?: string;
+  telemetry?: TelemetrySnapshot;
+  warmth?: 'cold' | 'warm';
+  bookingCompleted?: boolean;
 }
 
 export interface RatioMetric {
