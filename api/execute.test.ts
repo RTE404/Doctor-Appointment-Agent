@@ -329,3 +329,38 @@ describe('handleExecuteRequest', () => {
     }
   });
 });
+
+describe('execute request timing log', () => {
+  test('logs one privacy-safe timing entry per POST request', async () => {
+    const log = vi.fn();
+    const dependencies = { ...createDependencies(createHandlers().handlers), log };
+    await handleExecuteRequest(
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer browser-token' },
+        body: { action: 'agent-booking-chat', input: { patientId: 'patient-secret-id', message: 'chest pain' } },
+      },
+      environment,
+      dependencies
+    );
+    expect(log).toHaveBeenCalledTimes(1);
+    const entry = log.mock.calls[0][0];
+    expect(Object.keys(entry).sort()).toEqual(['action', 'correlationId', 'durationMs', 'event', 'statusClass']);
+    expect(entry).toMatchObject({ event: 'execute-timing', action: 'agent-booking-chat', statusClass: '2xx' });
+    expect(entry.correlationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(JSON.stringify(entry)).not.toMatch(/patient-secret-id|chest pain|browser-token/);
+  });
+
+  test('logs an invalid envelope as action "invalid" and does not log GET health checks', async () => {
+    const log = vi.fn();
+    const dependencies = { ...createDependencies(createHandlers().handlers), log };
+    await handleExecuteRequest({ method: 'GET', headers: {} }, environment, dependencies);
+    await handleExecuteRequest(
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: { action: 'not-allowed' } },
+      environment,
+      dependencies
+    );
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toMatchObject({ action: 'invalid', statusClass: '4xx' });
+  });
+});

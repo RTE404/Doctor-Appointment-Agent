@@ -1,6 +1,7 @@
 import { createReference, MedplumClient } from '@medplum/core';
 import type { BotEvent, ProfileResource } from '@medplum/core';
 import type { ClientApplication } from '@medplum/fhirtypes';
+import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { loginClientApplication } from './server/medplumClientApplication.js';
 import { handler as cancelAppointmentHandler } from '../src/bots/core/cancel-appointment.js';
@@ -72,6 +73,15 @@ export interface ExecuteDependencies {
   authenticate: (accessToken: string, environment: ExecuteEnvironment) => Promise<AuthenticatedSession>;
   loginWorker: (environment: ExecuteEnvironment) => Promise<{ medplum: MedplumClient }>;
   handlers?: Record<ActionName, RuntimeActionHandler>;
+  log?: (entry: ExecuteTimingLog) => void;
+}
+
+export interface ExecuteTimingLog {
+  event: 'execute-timing';
+  correlationId: string;
+  action: ActionName | 'invalid';
+  durationMs: number;
+  statusClass: '2xx' | '3xx' | '4xx' | '5xx';
 }
 
 const GEMINI_ACTIONS = new Set<ActionName>(['agent-patient-chat', 'agent-booking-chat']);
@@ -137,10 +147,10 @@ export async function dispatchAction(
   return handlers[action](medplum, event);
 }
 
-export async function handleExecuteRequest(
+async function handleExecuteRequestUntimed(
   request: ExecuteRequest,
   environment: ExecuteEnvironment,
-  dependencies: ExecuteDependencies = productionDependencies
+  dependencies: ExecuteDependencies
 ): Promise<ExecuteResponse> {
   if (request.method === 'GET') {
     return { status: 200, body: { ok: true, service: 'doctor-appointment-agent' } };
@@ -208,6 +218,29 @@ export async function handleExecuteRequest(
     console.error('Action execution failed', executionFailureCode(error));
     return executionFailed();
   }
+}
+
+function logExecuteTiming(entry: ExecuteTimingLog): void {
+  console.log(JSON.stringify(entry));
+}
+
+export async function handleExecuteRequest(
+  request: ExecuteRequest,
+  environment: ExecuteEnvironment,
+  dependencies: ExecuteDependencies = productionDependencies
+): Promise<ExecuteResponse> {
+  const startedAt = performance.now();
+  const response = await handleExecuteRequestUntimed(request, environment, dependencies);
+  if (request.method === 'POST') {
+    (dependencies.log ?? logExecuteTiming)({
+      event: 'execute-timing',
+      correlationId: randomUUID(),
+      action: parseEnvelope(request.body)?.action ?? 'invalid',
+      durationMs: Math.round(performance.now() - startedAt),
+      statusClass: `${Math.min(5, Math.max(2, Math.floor(response.status / 100)))}xx` as ExecuteTimingLog['statusClass'],
+    });
+  }
+  return response;
 }
 
 export default async function execute(request: IncomingMessage & { body?: unknown }, response: ServerResponse): Promise<void> {
