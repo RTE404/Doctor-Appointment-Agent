@@ -29,6 +29,8 @@ export interface PerformanceSummary {
     callsMissingUsage: number;
     meanPromptPerTurn: number | null;
     meanOutputPerTurn: number | null;
+    meanCachedPromptPerTurn: number | null;
+    callsReportingCachedTokens: number;
     meanTotalPerTurn: number | null;
     meanTotalPerOptionsTurn: number | null;
     meanTotalPerCompletedBooking: number | null;
@@ -98,14 +100,19 @@ function hasCompleteUsage(call: ModelUsageRecord): boolean {
 interface TurnTokens {
   prompt: number;
   output: number;
+  cached: number;
 }
 
 function turnTokens(observation: AgentEvalObservation): TurnTokens | undefined {
   const calls = observation.telemetry?.modelCalls ?? [];
   if (calls.length === 0 || !calls.every(hasCompleteUsage)) return undefined;
   return calls.reduce<TurnTokens>(
-    (sum, call) => ({ prompt: sum.prompt + (call.promptTokens as number), output: sum.output + (billableOutputTokens(call) as number) }),
-    { prompt: 0, output: 0 }
+    (sum, call) => ({
+      prompt: sum.prompt + (call.promptTokens as number),
+      output: sum.output + (billableOutputTokens(call) as number),
+      cached: sum.cached + (call.cachedPromptTokens ?? 0),
+    }),
+    { prompt: 0, output: 0, cached: 0 }
   );
 }
 
@@ -125,7 +132,10 @@ export function summarizePerformance(
   const totalOf = (entry: { tokens: TurnTokens }) => entry.tokens.prompt + entry.tokens.output;
   const price = pricing.models[model];
   const turnCost = (entry: { tokens: TurnTokens }) =>
-    costUsd({ promptTokens: entry.tokens.prompt, completionTokens: entry.tokens.output, retries: 0 }, price) as number;
+    costUsd(
+      { promptTokens: entry.tokens.prompt, completionTokens: entry.tokens.output, cachedPromptTokens: entry.tokens.cached, retries: 0 },
+      price
+    ) as number;
   const optionsTurns = withTokens.filter((entry) => entry.observation.terminalKind === 'options');
   const bookedTurns = withTokens.filter((entry) => entry.observation.bookingCompleted === true);
 
@@ -165,6 +175,8 @@ export function summarizePerformance(
       callsMissingUsage: allCalls.filter((call) => !hasCompleteUsage(call)).length,
       meanPromptPerTurn: mean(withTokens.map((entry) => entry.tokens.prompt)),
       meanOutputPerTurn: mean(withTokens.map((entry) => entry.tokens.output)),
+      meanCachedPromptPerTurn: mean(withTokens.map((entry) => entry.tokens.cached)),
+      callsReportingCachedTokens: allCalls.filter((call) => call.cachedPromptTokens !== undefined).length,
       meanTotalPerTurn: mean(withTokens.map(totalOf)),
       meanTotalPerOptionsTurn: mean(optionsTurns.map(totalOf)),
       meanTotalPerCompletedBooking: mean(bookedTurns.map(totalOf)),

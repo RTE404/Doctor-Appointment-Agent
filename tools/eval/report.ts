@@ -237,9 +237,13 @@ function renderPerformance(performance: PerformanceSummary): string[] {
     `- Loop-step distribution: ${JSON.stringify(performance.efficiency.loopStepDistribution)}`,
     `- Model calls: ${performance.tokens.modelCalls} (missing usage: ${performance.tokens.callsMissingUsage}); retries: ${performance.retries}`,
     `- Mean tokens per turn: prompt ${formatNumber(performance.tokens.meanPromptPerTurn, 0)}, output ${formatNumber(performance.tokens.meanOutputPerTurn, 0)}, total ${formatNumber(performance.tokens.meanTotalPerTurn, 0)}`,
+    `- Mean cached prompt tokens per turn: ${formatNumber(performance.tokens.meanCachedPromptPerTurn, 0)} (calls reporting cached tokens: ${performance.tokens.callsReportingCachedTokens})`,
     `- Mean total tokens per options turn: ${formatNumber(performance.tokens.meanTotalPerOptionsTurn, 0)}`,
     `- Mean total tokens per completed booking: ${formatNumber(performance.tokens.meanTotalPerCompletedBooking, 0)}`,
     ...cost,
+    ...(performance.tokens.callsReportingCachedTokens === 0
+      ? ['- Cost is priced at the list input rate; no cached-token data was reported, so this is an upper bound.']
+      : []),
     '',
   ];
 }

@@ -176,6 +176,41 @@ describe('evaluation report', () => {
     expect(markdown).toContain('## Performance');
     expect(markdown).toContain('| model.call | 1 | 120 | 120 | 120 | yes |');
     expect(markdown).toContain('Low-sample stages (fewer than 20 turns) are labeled');
+    expect(markdown).toContain('- Mean cached prompt tokens per turn: 0 (calls reporting cached tokens: 0)');
+    expect(markdown).toContain(
+      '- Cost is priced at the list input rate; no cached-token data was reported, so this is an upper bound.'
+    );
+  });
+
+  it('reports mean cached prompt tokens without the upper-bound note when cached tokens were reported', () => {
+    const { observations, input } = makeReportInput();
+    const performance = summarizePerformance(
+      [
+        {
+          ...observations[0],
+          telemetry: {
+            stages: [{ stage: 'model.call', durationMs: 120, outcome: 'ok' }],
+            modelCalls: [{ promptTokens: 10, completionTokens: 2, totalTokens: 12, cachedPromptTokens: 4, retries: 0 }],
+          },
+        },
+      ],
+      {
+        version: 1,
+        models: {
+          'gemini-3.5-flash-lite': {
+            inputPerMillionUsd: 0.3,
+            outputPerMillionUsd: 2.5,
+            cachedInputPerMillionUsd: 0.03,
+            source: 'fixture',
+            retrievedOn: '2026-09-28',
+          },
+        },
+      },
+      'gemini-3.5-flash-lite'
+    );
+    const markdown = renderReportMarkdown(buildReport({ ...input, performance }));
+    expect(markdown).toContain('- Mean cached prompt tokens per turn: 4 (calls reporting cached tokens: 1)');
+    expect(markdown).not.toContain('this is an upper bound');
   });
 
   it('omits the performance section when absent', () => {

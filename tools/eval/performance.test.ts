@@ -82,6 +82,62 @@ describe('summarizePerformance', () => {
     expect(summary.cost).toMatchObject({ status: 'priced', meanUsdPerTurn: (3000 * 0.3 + 200 * 2.5) / 1_000_000 });
   });
 
+  it('threads cached prompt tokens through turn aggregation and cost when the price table has a cached rate', () => {
+    const pricingWithCache = {
+      version: 1 as const,
+      models: {
+        'gemini-3.5-flash-lite': {
+          inputPerMillionUsd: 0.3,
+          outputPerMillionUsd: 2.5,
+          cachedInputPerMillionUsd: 0.03,
+          source: 'fixture',
+          retrievedOn: '2026-09-28',
+        },
+      },
+    };
+    const summary = summarizePerformance(
+      [
+        observation({
+          telemetry: {
+            stages: [],
+            modelCalls: [{ promptTokens: 1_000_000, completionTokens: 0, totalTokens: 1_000_000, cachedPromptTokens: 400_000, retries: 0 }],
+          },
+        }),
+        observation({
+          telemetry: { stages: [], modelCalls: [{ promptTokens: 10, completionTokens: 2, totalTokens: 12, retries: 0 }] },
+        }),
+      ],
+      pricingWithCache,
+      'gemini-3.5-flash-lite'
+    );
+    expect(summary.tokens.meanCachedPromptPerTurn).toBe(200_000);
+    expect(summary.tokens.callsReportingCachedTokens).toBe(1);
+    const turn1Cost = (600_000 * 0.3 + 400_000 * 0.03 + 0 * 2.5) / 1_000_000;
+    const turn2Cost = (10 * 0.3 + 2 * 2.5) / 1_000_000;
+    expect(summary.cost).toMatchObject({ status: 'priced', meanUsdPerTurn: (turn1Cost + turn2Cost) / 2 });
+  });
+
+  it('counts turns with no cached field as zero cached, and calls without the field are excluded from callsReportingCachedTokens', () => {
+    const summary = summarizePerformance(
+      [
+        observation({
+          telemetry: {
+            stages: [],
+            modelCalls: [
+              { promptTokens: 1000, completionTokens: 100, totalTokens: 1100, cachedPromptTokens: 400, retries: 1 },
+              { promptTokens: 2000, completionTokens: 100, totalTokens: 2100, retries: 0 },
+            ],
+          },
+        }),
+        observation({ terminalKind: 'question', telemetry: { stages: [], modelCalls: [{ retries: 0 }] } }),
+      ],
+      pricing,
+      'gemini-3.5-flash-lite'
+    );
+    expect(summary.tokens.meanCachedPromptPerTurn).toBe(400);
+    expect(summary.tokens.callsReportingCachedTokens).toBe(1);
+  });
+
   it('reports cost as unavailable, not zero, when the model has no price entry', () => {
     const summary = summarizePerformance([observation({})], pricing, 'unknown-model');
     expect(summary.cost).toEqual({ status: 'unavailable', reason: 'No price entry for unknown-model' });
