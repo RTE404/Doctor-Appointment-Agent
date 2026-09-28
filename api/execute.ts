@@ -230,12 +230,13 @@ export async function handleExecuteRequest(
   dependencies: ExecuteDependencies = productionDependencies
 ): Promise<ExecuteResponse> {
   const startedAt = performance.now();
+  const correlationId = randomUUID();
   const response = await handleExecuteRequestUntimed(request, environment, dependencies);
   if (request.method === 'POST') {
     try {
       (dependencies.log ?? logExecuteTiming)({
         event: 'execute-timing',
-        correlationId: randomUUID(),
+        correlationId,
         action: parseEnvelope(request.body)?.action ?? 'invalid',
         durationMs: Math.round(performance.now() - startedAt),
         statusClass: `${Math.min(5, Math.max(2, Math.floor(response.status / 100)))}xx` as ExecuteTimingLog['statusClass'],

@@ -2,6 +2,18 @@ import type { BotEvent, MedplumClient } from '@medplum/core';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, test, vi } from 'vitest';
+
+const { correlationIdCallOrder } = vi.hoisted(() => ({ correlationIdCallOrder: [] as string[] }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    randomUUID: (...args: Parameters<typeof actual.randomUUID>) => {
+      correlationIdCallOrder.push('randomUUID');
+      return actual.randomUUID(...args);
+    },
+  };
+});
 import {
   ALLOWED_ACTIONS,
   dispatchAction,
@@ -349,6 +361,23 @@ describe('execute request timing log', () => {
     expect(entry).toMatchObject({ event: 'execute-timing', action: 'agent-booking-chat', statusClass: '2xx' });
     expect(entry.correlationId).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.stringify(entry)).not.toMatch(/patient-secret-id|chest pain|browser-token/);
+  });
+
+  test('generates the correlation id at request start, before authenticating', async () => {
+    correlationIdCallOrder.length = 0;
+    const dependencies: ExecuteDependencies = {
+      ...createDependencies(createHandlers().handlers),
+      authenticate: async () => {
+        correlationIdCallOrder.push('authenticate');
+        return { medplum, profile, projectId: 'target-project' };
+      },
+    };
+    await handleExecuteRequest(
+      request({ action: 'agent-booking-chat', input: {} }, 'Bearer browser-token'),
+      environment,
+      dependencies
+    );
+    expect(correlationIdCallOrder).toEqual(['randomUUID', 'authenticate']);
   });
 
   test('logs an invalid envelope as action "invalid" and does not log GET health checks', async () => {
