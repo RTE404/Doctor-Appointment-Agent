@@ -98,4 +98,25 @@ describe('runBookingChatLoop telemetry', () => {
       { retries: 0 },
     ]);
   });
+
+  it('records cachedPromptTokens from usage.prompt_tokens_details.cached_tokens when Gemini reports it', async () => {
+    const telemetry = createAgentTelemetry();
+    await runBookingChatLoop(
+      { communication: { resourceType: 'Communication', id: 'session-1' } as Communication, transcript: [] },
+      {
+        callModel: async () => ({
+          message: { role: 'assistant' as const, content: 'Which day works?' },
+          usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55, prompt_tokens_details: { cached_tokens: 30 } },
+          retries: 0,
+        }),
+        executeTool: async () => [],
+        writeSummary: async () => 'summary-1',
+        persist: async () => undefined,
+        telemetry,
+      }
+    );
+    expect(telemetry.snapshot().modelCalls).toEqual([
+      { promptTokens: 50, completionTokens: 5, totalTokens: 55, cachedPromptTokens: 30, retries: 0 },
+    ]);
+  });
 });

@@ -5,6 +5,7 @@ import type { ModelUsageRecord } from '../../src/bots/agent/lib/agentTelemetry.j
 export interface ModelPrice {
   inputPerMillionUsd: number;
   outputPerMillionUsd: number;
+  cachedInputPerMillionUsd?: number;
   source: string;
   retrievedOn: string;
   notes?: string;
@@ -24,6 +25,7 @@ export function loadPricing(path = 'tools/eval/pricing.json'): PricingTable {
     if (
       !(price.inputPerMillionUsd >= 0) ||
       !(price.outputPerMillionUsd >= 0) ||
+      (price.cachedInputPerMillionUsd !== undefined && !(price.cachedInputPerMillionUsd >= 0)) ||
       typeof price.source !== 'string' ||
       !/^\d{4}-\d{2}-\d{2}$/.test(price.retrievedOn)
     ) {
@@ -45,5 +47,15 @@ export function billableOutputTokens(usage: ModelUsageRecord): number | undefine
 export function costUsd(usage: ModelUsageRecord, price: ModelPrice): number | undefined {
   const output = billableOutputTokens(usage);
   if (usage.promptTokens === undefined || output === undefined) return undefined;
+  if (usage.cachedPromptTokens !== undefined && price.cachedInputPerMillionUsd !== undefined) {
+    const cached = Math.min(usage.cachedPromptTokens, usage.promptTokens);
+    const uncached = usage.promptTokens - cached;
+    return (
+      (cached * price.cachedInputPerMillionUsd +
+        uncached * price.inputPerMillionUsd +
+        output * price.outputPerMillionUsd) /
+      1_000_000
+    );
+  }
   return (usage.promptTokens * price.inputPerMillionUsd + output * price.outputPerMillionUsd) / 1_000_000;
 }

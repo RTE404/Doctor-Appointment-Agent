@@ -4,6 +4,7 @@
     "gemini-3.5-flash-lite": {
       "inputPerMillionUsd": 0.3,
       "outputPerMillionUsd": 2.5,
+      "cachedInputPerMillionUsd": 0.03,
       "source": "https://ai.google.dev/gemini-api/docs/pricing",
       "retrievedOn": "2026-09-28",
       "notes": "Paid tier standard pricing; output price includes thinking tokens."

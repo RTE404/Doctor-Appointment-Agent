@@ -20,6 +20,7 @@ export interface GeminiUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
 }
 
 export interface BookingChatModelResponse {
@@ -82,6 +83,7 @@ export async function runBookingChatLoop(
       promptTokens: response.usage?.prompt_tokens,
       completionTokens: response.usage?.completion_tokens,
       totalTokens: response.usage?.total_tokens,
+      cachedPromptTokens: response.usage?.prompt_tokens_details?.cached_tokens,
       retries: response.retries ?? 0,
     });
     const toolCalls = response.message.tool_calls ?? [];

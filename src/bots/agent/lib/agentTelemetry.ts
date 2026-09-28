@@ -38,6 +38,7 @@ export interface ModelUsageRecord {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  cachedPromptTokens?: number;
   retries: number;
 }
 
@@ -122,6 +123,7 @@ export function createAgentTelemetry(clock: () => number = () => performance.now
         promptTokens: numberOrUndefined(usage.promptTokens),
         completionTokens: numberOrUndefined(usage.completionTokens),
         totalTokens: numberOrUndefined(usage.totalTokens),
+        cachedPromptTokens: numberOrUndefined(usage.cachedPromptTokens),
         retries: usage.retries,
       });
     },

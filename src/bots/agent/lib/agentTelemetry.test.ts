@@ -61,15 +61,25 @@ describe('createAgentTelemetry', () => {
     ]);
   });
 
+  it('records cachedPromptTokens as a plain number and leaves it absent when not reported', () => {
+    const telemetry = createAgentTelemetry();
+    telemetry.recordModelUsage({ promptTokens: 100, completionTokens: 20, totalTokens: 120, cachedPromptTokens: 40, retries: 0 });
+    telemetry.recordModelUsage({ promptTokens: 5, retries: 0 });
+    expect(telemetry.snapshot().modelCalls).toEqual([
+      { promptTokens: 100, completionTokens: 20, totalTokens: 120, cachedPromptTokens: 40, retries: 0 },
+      { promptTokens: 5, retries: 0 },
+    ]);
+  });
+
   it('serializes only allowlisted keys and enum string values, whatever the inputs contained', async () => {
     const telemetry = createAgentTelemetry(fakeClock(0, 1, 1, 3, 3, 4));
     await telemetry.time('tool.nppes-search', async () => ({ patientId: 'Patient/abc', npi: '1234567890' }));
     await telemetry.time('model.call', async () => { throw new Error('Bearer secret-token Patient/abc'); }).catch(() => undefined);
     await telemetry.time('tool.find', async () => ({ error: 'Practitioner/xyz transcript text' }), { isErrorResult: isToolErrorResult });
-    telemetry.recordModelUsage({ promptTokens: 1, completionTokens: 1, totalTokens: 2, retries: 0 });
+    telemetry.recordModelUsage({ promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedPromptTokens: 1, retries: 0 });
 
     const allowedKeys = new Set(['stages', 'modelCalls', 'stage', 'durationMs', 'outcome', 'errorCategory',
-      'promptTokens', 'completionTokens', 'totalTokens', 'retries']);
+      'promptTokens', 'completionTokens', 'totalTokens', 'cachedPromptTokens', 'retries']);
     const allowedStrings = new Set<string>([...AGENT_STAGES, 'ok', 'error', 'skipped',
       'timeout', 'http-4xx', 'http-5xx', 'validation', 'unknown']);
     JSON.parse(JSON.stringify(telemetry.snapshot()), (key, value) => {
