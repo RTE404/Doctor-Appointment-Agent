@@ -6,7 +6,7 @@ import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import { handler as bookAppointmentHandler } from './agent-book-appointment';
 import type { BookInput, BookResult } from './agent-book-appointment';
-import { __setGeminiToolCallerForTests, handler } from './agent-booking-chat';
+import { __setGeminiToolCallerForTests, callGeminiBookingModel, GEMINI_BOOKING_MODEL, handler } from './agent-booking-chat';
 import type { BookingChatInput } from './agent-booking-chat';
 import type { BookingToolCall } from './lib/bookingSession';
 import type { BookingChatTraceEvent } from './lib/bookingChatLoop';
@@ -797,5 +797,21 @@ describe('agent-booking-chat handler', () => {
 
     const stages = telemetry.snapshot().stages.map((entry) => entry.stage);
     expect(stages).not.toContain('tool.provider-reconcile');
+  });
+});
+
+describe('callGeminiBookingModel', () => {
+  test('requests the exported GEMINI_BOOKING_MODEL constant, not an inline literal', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { role: 'assistant', content: 'hi' } }], usage: {} }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await callGeminiBookingModel([{ role: 'user', content: 'hi' }], 'test-key');
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string) as { model: string };
+    expect(requestBody.model).toBe(GEMINI_BOOKING_MODEL);
+    expect(GEMINI_BOOKING_MODEL).toBe('gemini-3.5-flash-lite');
   });
 });

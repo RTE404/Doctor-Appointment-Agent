@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 
+import { GEMINI_BOOKING_MODEL } from '../../src/bots/agent/agent-booking-chat.js';
 import { executeDeterministicScenario } from './deterministicExecutor.js';
 import { createLiveSmokeExecutor } from './liveSmokeExecutor.js';
 import { loadScenarioCatalog } from './loadScenarios.js';
@@ -172,7 +173,7 @@ export async function runCli(args: string[]): Promise<void> {
     });
   }
   const result = await runEvaluation(catalog, executor, options);
-  const model = 'gemini-3.5-flash-lite';
+  const model = GEMINI_BOOKING_MODEL;
   const performance =
     options.mode === 'deterministic' ? undefined : summarizePerformance(result.observations, loadPricing(), model);
   const report = buildReport({

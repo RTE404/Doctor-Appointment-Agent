@@ -24,6 +24,8 @@ export type BookingChatInput = { patientId: string; message: string; sessionId?:
 
 export type BookingChatResult = BookingChatLoopResult;
 
+export const GEMINI_BOOKING_MODEL = 'gemini-3.5-flash-lite';
+
 const GEMINI_RETRY_DELAYS_MS = [1_000, 4_000, 16_000, 60_000] as const;
 const RETRYABLE_GEMINI_STATUSES = new Set([429, 500, 502, 503, 504]);
 
@@ -45,7 +47,7 @@ export async function callGeminiBookingModel(
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gemini-3.5-flash-lite',
+        model: GEMINI_BOOKING_MODEL,
         temperature: 0,
         messages: transcript,
         tools: BOOKING_CHAT_TOOL_SCHEMAS,
