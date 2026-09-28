@@ -1,6 +1,6 @@
 # Agent Evaluation Baseline
 
-**Status:** Deterministic and Gemini model baselines complete; live Medplum smoke blocked by missing scoped demo credentials.
+**Status:** Phase 1 complete. Deterministic, Gemini model, and live Medplum smoke baselines are recorded; the live smoke passed its safety gate with 6/8 task success.
 
 ## What was evaluated
 
@@ -67,28 +67,46 @@ npm run eval:agent:model
 
 The initial long-batch attempts exposed intermittent Gemini HTTP 429 responses. Single production-shaped probes succeeded while the concurrency-one long batch failed, a pattern consistent with a minute-scale external request/token window. The direct REST caller now performs four bounded 429 retries with 1, 4, 16, and 60 second backoffs plus small jitter. Three retry regression tests cover recovery, the minute-scale final wait, and the hard retry cap. The unchanged baseline command then completed all 120 observations.
 
-## Live Medplum smoke status
+## Live Medplum smoke results
 
-The eight-scenario live-smoke executor is implemented and fail-closed. It requires the complete browser and worker demo credential set plus the Gemini key, accepts only exact reviewed synthetic scenarios, tags created activity resources with a run-specific tag, and deletes only the resources it tracked and verified as tagged.
+The eight-scenario live-smoke executor is fail-closed. It requires the complete browser and worker demo credential set plus the Gemini key, accepts only exact reviewed synthetic scenarios, tags created activity resources with a run-specific tag, and deletes only the resources it tracked and verified as tagged.
+
+On 2026-09-28, after the scoped `DEMO_MEDPLUM_*` and `DEMO_WORKER_*` credentials were configured locally, the official run executed at commit `992bd4a` against the synthetic demo Medplum project and `gemini-3.5-flash-lite`:
 
 ```powershell
 npm run eval:agent:smoke
 ```
 
-The command was invoked after explicit authorization. It stopped before login or any remote request with:
+| Metric | Result |
+| --- | ---: |
+| End-to-end task success | 75.0% (6 / 8) |
+| Specialty-routing accuracy | 66.7% (4 / 6) |
+| Clarification-policy compliance | 75.0% (6 / 8) |
+| Tool-sequence compliance | 75.0% (6 / 8) |
+| Grounded-option precision | 100.0% (6 / 6) |
+| Distinct-provider compliance | 100.0% (4 / 4) |
+| Top-option preference adherence | N/A (0 / 0) |
+| Confirmation-gate violation rate | 0.0% (0 / 8) |
+| Unauthorized booking rate | 0.0% (0 / 8) |
+| Step-cap rate | 0.0% (0 / 8) |
 
-```text
-live smoke not run: missing required local configuration
-```
+**Live safety gate: passed.** The browser client authenticated under its read-only AccessPolicy, the worker performed all writes, and every created resource was cleaned up by run tag.
 
-`DEMO_MEDPLUM_CLIENT_ID`, `DEMO_MEDPLUM_CLIENT_SECRET`, `DEMO_WORKER_CLIENT_ID`, and `DEMO_WORKER_CLIENT_SECRET` were absent. Broader credentials were not substituted. No remote resource was created, no cleanup was required, and no live-integration pass is claimed.
+The two failures were `routing-generalpractice-plainlanguage` and `routing-generalpractice-previous`: in both, the model ended the turn with a clarifying question instead of proposing grounded General Practice options, which fails the clarification, routing, terminal, and tool-sequence checks for those scenarios.
+
+### Findings from the live layer
+
+- **Live quality varies between runs.** A diagnostic live run at `38f0767` completed all eight scenarios with a passing safety gate but 4/8 task success once scored with the corrected rule below. Failing scenarios differed between runs. Eight single-repetition scenarios are too few to state a stable live success rate; the numbers above are one observed run, not an estimate.
+- **Live context changes model behavior.** Diagnostic traces showed patterns the controlled-tool evaluation never produced: repeated `propose_options` calls after deterministic correction of the model's picks, a clarifying question asked after searching when none was needed, and a missing clarification when one was expected. These are Phase 2 inputs; agent behavior was not tuned to raise this baseline.
+- **Scorer correction.** The first live run exposed a harness bug: top-option preference compared fixture aliases such as `provider-a` with run-local live aliases, so it could never pass in live mode. Commit `992bd4a` makes preference not applicable to live-smoke runs; deterministic and model preference results are unchanged (deterministic 83 / 83).
+- **Gemini 503 responses.** The first two official attempts stopped on a transient Gemini HTTP 503 before any scenario completed; resource cleanup still ran. The booking caller retries only HTTP 429, so bounded 503 retry is a recommended follow-up rather than part of this baseline.
 
 ## Repository verification
 
 The completed local implementation passed:
 
 - Focused Gemini retry, booking-handler, and model-executor verification: 21 tests across 3 files.
-- Full Vitest suite: 388 tests across 63 files.
+- Full Vitest suite: 390 tests across 63 files (after the live-smoke scorer correction).
 - API Node ESM compiler check.
 - ESLint over src and api.
 - TypeScript plus Vite production build: 6,848 modules transformed in 1 minute 36 seconds on the current run.
@@ -98,6 +116,6 @@ The build still reports the pre-existing 1,058.31 kB main JavaScript chunk (321.
 
 ## What these numbers do and do not mean
 
-These results prove deterministic orchestration and safety behavior for the versioned synthetic fixtures at commit `99251b3` and Gemini routing/tool behavior with controlled synthetic tools at commit `a728db2`. They do not prove real-world clinical accuracy, broad production reliability, or live Medplum availability. The model and live-smoke layers are deliberately reported separately so deterministic or controlled-model success cannot conceal an external integration failure.
+These results prove deterministic orchestration and safety behavior for the versioned synthetic fixtures at commit `99251b3`, Gemini routing/tool behavior with controlled synthetic tools at commit `a728db2`, and one end-to-end pass of eight synthetic scenarios through the real Medplum boundary at commit `992bd4a`. They do not prove real-world clinical accuracy, broad production reliability, or a stable live success rate. The model and live-smoke layers are deliberately reported separately so deterministic or controlled-model success cannot conceal an external integration failure.
 
-Resume-safe wording is therefore limited to: built a 120-scenario synthetic agent evaluation suite with a repeatable 120/120 deterministic pass; ran Gemini three times across 40 language scenarios for a 120/120 controlled-model pass with 90/90 routing and grounded-option checks; and observed zero confirmation-gate or unauthorized-booking violations in the defined synthetic scope. A live Medplum result is not part of this claim.
+Resume-safe wording is therefore limited to: built a 120-scenario synthetic agent evaluation suite with a repeatable 120/120 deterministic pass; ran Gemini three times across 40 language scenarios for a 120/120 controlled-model pass with 90/90 routing and grounded-option checks; and observed zero confirmation-gate or unauthorized-booking violations in the defined synthetic scope. The live layer may additionally be described as: ran eight synthetic scenarios end-to-end against a live Medplum FHIR project with zero ungrounded options, confirmation-gate violations, or unauthorized bookings; live task success (6/8 in one run) is not a stable rate and should not be quoted as one.

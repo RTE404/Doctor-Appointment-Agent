@@ -1,7 +1,7 @@
 # Improvement Plan
 
-**Status:** Phase 1 deterministic and Gemini model baselines are verified. The external Medplum smoke remains blocked by
-missing scoped demo browser and worker credentials.
+**Status:** Phase 1 is complete: deterministic, Gemini model, and live Medplum smoke baselines are published in
+docs/metrics/agent-eval-baseline.md. Phase 2 (latency and cost) is next.
 
 **Approved scope:** Implement the following three improvements, one at a time, in this order:
 
@@ -65,9 +65,15 @@ baseline; Phase 1 and Phase 2 will establish them.
 - Verified external model execution: 40 eligible Gemini scenarios ran three times each for 120/120 task success, 90/90
   applicable routing and grounded-option checks, zero confirmation or unauthorized-booking violations, and a passing
   controlled-model safety gate.
-- Verified external failure boundary: after explicit authorization, the live Medplum smoke stopped before login or any
-  resource request because all four scoped `DEMO_MEDPLUM_*` browser and worker credentials were missing. No remote
-  resource was created, no cleanup was required, and no live-integration pass is claimed.
+- Verified live integration (2026-09-28, commit `992bd4a`): with scoped browser and worker credentials, the eight-scenario
+  live Medplum smoke passed its safety gate (6/6 grounded options, zero confirmation or unauthorized-booking violations)
+  with 6/8 task success; both failures were General Practice turns that ended in an unnecessary clarifying question.
+  Live task success varied between runs (4/8 in a diagnostic run) and is reported as an observation, not a stable rate.
+- Fixed a live-only scorer bug: fixture provider aliases were compared with run-local live aliases, so top-option
+  preference is now not applicable to live-smoke runs.
+- Phase 2 inputs from the live layer: repeated `propose_options` calls after deterministic correction, clarification
+  timing that differs from the controlled evaluation, and transient Gemini HTTP 503 responses that the 429-only retry
+  does not cover.
 - Hardened the direct Gemini REST caller against the observed intermittent HTTP 429 window with four bounded retries and
   test-covered 1, 4, 16, and 60 second backoffs plus small jitter.
 
