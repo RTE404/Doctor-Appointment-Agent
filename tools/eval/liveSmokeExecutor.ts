@@ -5,6 +5,9 @@ import { randomUUID } from 'node:crypto';
 
 import { handler as bookingChatHandler } from '../../src/bots/agent/agent-booking-chat.js';
 import type { BookingChatInput } from '../../src/bots/agent/agent-booking-chat.js';
+import { handler as bookAppointmentHandler } from '../../src/bots/agent/agent-book-appointment.js';
+import { createAgentTelemetry } from '../../src/bots/agent/lib/agentTelemetry.js';
+import type { AgentTelemetry, TelemetrySnapshot } from '../../src/bots/agent/lib/agentTelemetry.js';
 import type { BookingChatTraceEvent } from '../../src/bots/agent/lib/bookingChatLoop.js';
 import type { BookableOption } from '../../src/bots/agent/lib/bookableOptions.js';
 import { isDemoGenerated, withDemoGeneratedTag } from '../../src/demo/demoTag.js';
@@ -50,6 +53,11 @@ export interface LiveSmokeRunResult {
   clarificationAsked: boolean;
   sessionResumed: boolean;
   sanitizedErrorCategory?: string;
+  telemetry?: TelemetrySnapshot;
+  bookingCompleted?: boolean;
+  confirmationRequested?: boolean;
+  bookingMutationCount?: number;
+  bookingMutationCountBeforeConfirmation?: number;
 }
 
 export interface LiveSmokeDependencies {
@@ -156,7 +164,19 @@ function addRunTags(resource: Resource, runTagCode: string): Resource {
   } as Resource;
 }
 
-function trackingClient(client: MedplumClient, plan: LiveSmokeCleanupPlan): MedplumClient {
+export interface BookingMutationCounter {
+  count: number;
+}
+
+function isBookUrl(url: unknown): boolean {
+  return String(url).endsWith('/Appointment/$book');
+}
+
+export function createTrackingClient(
+  client: MedplumClient,
+  plan: LiveSmokeCleanupPlan,
+  counter: BookingMutationCounter
+): MedplumClient {
   const activityTypes = new Set<ActivityResourceType>(['Appointment', 'Communication', 'Encounter']);
   return new Proxy(client, {
     get(target, property, receiver) {
@@ -172,10 +192,62 @@ function trackingClient(client: MedplumClient, plan: LiveSmokeCleanupPlan): Medp
           return created;
         };
       }
+      if (property === 'post') {
+        return async (url: URL | string, body: unknown, ...rest: unknown[]): Promise<unknown> => {
+          if (!isBookUrl(url)) {
+            return (target.post as (...args: unknown[]) => Promise<unknown>).call(target, url, body, ...rest);
+          }
+          const parameters = body as { parameter?: Array<{ name: string; resource?: Resource }> };
+          const tagged = {
+            ...parameters,
+            parameter: (parameters.parameter ?? []).map((parameter) =>
+              parameter.resource ? { ...parameter, resource: addRunTags(parameter.resource, plan.runTagCode) } : parameter
+            ),
+          };
+          counter.count += 1;
+          return (target.post as (...args: unknown[]) => Promise<unknown>).call(target, url, tagged, ...rest);
+        };
+      }
       const value = Reflect.get(target, property, receiver) as unknown;
       return typeof value === 'function' ? value.bind(target) : value;
     },
   }) as MedplumClient;
+}
+
+// Note: addRunTags applies withDemoGeneratedTag too; the booking handler
+// already set the demo tag, so this is idempotent.
+
+export async function confirmAndBookTopOption(
+  client: MedplumClient,
+  input: { patientId: string; option: BookableOption; summaryCommunicationId: string },
+  plan: LiveSmokeCleanupPlan,
+  counter: BookingMutationCounter,
+  telemetry: AgentTelemetry,
+  book: typeof bookAppointmentHandler = bookAppointmentHandler
+): Promise<{ confirmationRequested: true; bookingCompleted: boolean; mutationsBeforeConfirmation: number }> {
+  // Explicit confirmation step: nothing may have been booked before this point.
+  const mutationsBeforeConfirmation = counter.count;
+  const result = await book(
+    client,
+    {
+      bot: { identifier: { system: 'http://example.com', value: 'agent-book-appointment' } },
+      contentType: 'application/json',
+      input: {
+        patientId: input.patientId,
+        practitionerId: input.option.practitionerId,
+        scheduleId: input.option.scheduleId,
+        start: input.option.start,
+        end: input.option.end,
+        summaryCommunicationId: input.summaryCommunicationId,
+      },
+      secrets: {},
+    },
+    telemetry
+  );
+  if (result.ok && result.appointment.id) {
+    plan.resources.push({ resourceType: 'Appointment', id: result.appointment.id });
+  }
+  return { confirmationRequested: true, bookingCompleted: result.ok, mutationsBeforeConfirmation };
 }
 
 function sanitizeLiveOptions(options: BookableOption[]): {
@@ -213,7 +285,9 @@ async function runProduction(
   environment: CompleteLiveSmokeEnvironment
 ): Promise<LiveSmokeRunResult> {
   const session = asProductionSession(sessionValue);
-  const client = trackingClient(session.worker, plan);
+  const telemetry = createAgentTelemetry();
+  const counter: BookingMutationCounter = { count: 0 };
+  const client = createTrackingClient(session.worker, plan, counter);
   const trace: BookingChatTraceEvent[] = [];
   const event: BotEvent<BookingChatInput> = {
     bot: { identifier: { system: 'http://example.com', value: 'agent-booking-chat' } },
@@ -223,7 +297,7 @@ async function runProduction(
       GEMINI_API_KEY: { name: 'GEMINI_API_KEY', valueString: environment.GEMINI_API_KEY },
     },
   };
-  const result = await bookingChatHandler(client, event, (traceEvent) => trace.push(traceEvent));
+  const result = await bookingChatHandler(client, event, (traceEvent) => trace.push(traceEvent), telemetry);
   const modelResponses = trace.filter((traceEvent) => traceEvent.type === 'model-response');
   const toolNames = modelResponses.flatMap((traceEvent) => traceEvent.toolNames);
   const options = result.kind === 'options' ? result.options : [];
@@ -234,6 +308,16 @@ async function runProduction(
     specialtyCode = summary.topic?.coding?.find(
       (coding) => coding.system === 'http://nucc.org/provider-taxonomy'
     )?.code;
+  }
+  let booking: Awaited<ReturnType<typeof confirmAndBookTopOption>> | undefined;
+  if (result.kind === 'options' && result.options.length > 0) {
+    booking = await confirmAndBookTopOption(
+      client,
+      { patientId: session.syntheticPatientId, option: result.options[0], summaryCommunicationId: result.summaryCommunicationId },
+      plan,
+      counter,
+      telemetry
+    );
   }
   return {
     terminalKind: result.kind === 'options' ? 'options' : result.kind === 'error' ? 'error' : 'question',
@@ -248,6 +332,11 @@ async function runProduction(
     searchedProviderAliases: sanitized.aliases,
     clarificationAsked: toolNames.includes('ask_clarifying_question'),
     sessionResumed: result.kind === 'question' || result.kind === 'options',
+    telemetry: telemetry.snapshot(),
+    confirmationRequested: booking?.confirmationRequested ?? false,
+    bookingCompleted: booking?.bookingCompleted ?? false,
+    bookingMutationCount: counter.count,
+    bookingMutationCountBeforeConfirmation: booking?.mutationsBeforeConfirmation ?? counter.count,
   };
 }
 
@@ -314,9 +403,12 @@ export function createLiveSmokeExecutor(
   const completeEnvironment = requireCompleteEnvironment(environment);
   const cleanupPlan = dependencies.buildCleanupPlan();
   let sessionPromise: Promise<unknown> | undefined;
+  let executed = 0;
   return {
     async execute(scenario, repetition) {
       assertApprovedScenario(scenario);
+      const warmth = executed === 0 ? 'cold' : 'warm';
+      executed += 1;
       sessionPromise ??= dependencies.initialize(completeEnvironment);
       const session = await sessionPromise;
       try {
@@ -326,9 +418,11 @@ export function createLiveSmokeExecutor(
           mode: 'live-smoke',
           repetition,
           ...result,
-          confirmationRequested: false,
-          bookingMutationCount: 0,
-          bookingMutationCountBeforeConfirmation: 0,
+          warmth,
+          confirmationRequested: result.confirmationRequested ?? false,
+          bookingMutationCount: result.bookingMutationCount ?? 0,
+          bookingMutationCountBeforeConfirmation: result.bookingMutationCountBeforeConfirmation ?? 0,
+          bookingCompleted: result.bookingCompleted ?? false,
           crossPatientSessionAccepted: false,
           duplicateAppointmentCount: 0,
           slotConflictRejected: false,

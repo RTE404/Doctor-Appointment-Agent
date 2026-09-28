@@ -8,6 +8,8 @@ import {
   type LiveSmokeEnvironment,
   type LiveSmokeRunResult,
 } from './liveSmokeExecutor';
+import { createAgentTelemetry } from '../../src/bots/agent/lib/agentTelemetry';
+import { confirmAndBookTopOption, createTrackingClient } from './liveSmokeExecutor';
 
 const catalog = loadScenarioCatalog('data/evals/booking-scenarios.json');
 
@@ -132,5 +134,69 @@ describe('createLiveSmokeExecutor', () => {
       'sanitized live failure'
     );
     expect(deps.cleanup).toHaveBeenCalledTimes(1);
+  });
+});
+
+const option = {
+  id: 'o1', npi: '1234567890', practitionerId: 'pr-1', scheduleId: 'sc-1', doctorName: 'Dr. Synthetic',
+  start: '2026-10-05T13:00:00.000Z', end: '2026-10-05T13:30:00.000Z', timeZone: 'America/New_York', previousDoctor: false,
+};
+
+describe('live smoke booking', () => {
+  it('tags the $book appointment with the run tag, keeping existing tags, and counts the mutation', async () => {
+    const post = vi.fn(async (_url: URL | string, _body: unknown) => ({}));
+    const fake = { post, createResource: vi.fn(), fhirUrl: (...parts: string[]) => new URL(`https://x.test/fhir/R4/${parts.join('/')}`) };
+    const counter = { count: 0 };
+    const plan = { runTagCode: 'agent-eval-run', resources: [] };
+    const client = createTrackingClient(fake as never, plan, counter);
+    await client.post(fake.fhirUrl('Appointment', '$book'), {
+      resourceType: 'Parameters',
+      parameter: [{ name: 'appointment', resource: { resourceType: 'Appointment', meta: { tag: [{ system: 'demo', code: 'demo-generated' }] } } }],
+    });
+    const sent = post.mock.calls[0][1] as { parameter: Array<{ resource: { meta: { tag: Array<{ system: string; code: string }> } } }> };
+    expect(sent.parameter[0].resource.meta.tag).toEqual(
+      expect.arrayContaining([
+        { system: 'demo', code: 'demo-generated' },
+        { system: 'https://doctor-appointment-agent.example/fhir/eval-run', code: 'agent-eval-run' },
+      ])
+    );
+    expect(counter.count).toBe(1);
+  });
+
+  it('tracks a booked appointment for cleanup after the confirmation step', async () => {
+    const plan = { runTagCode: 'agent-eval-run', resources: [] as Array<{ resourceType: 'Appointment' | 'Communication' | 'Encounter'; id: string }> };
+    const counter = { count: 0 };
+    const book = vi.fn(async () => {
+      counter.count += 1;
+      return { ok: true as const, appointment: { resourceType: 'Appointment' as const, id: 'appt-1', status: 'booked' as const, participant: [] } };
+    });
+    const result = await confirmAndBookTopOption({} as never, { patientId: 'p', option, summaryCommunicationId: 'c' }, plan, counter, createAgentTelemetry(), book as never);
+    expect(result).toEqual({ confirmationRequested: true, bookingCompleted: true, mutationsBeforeConfirmation: 0 });
+    expect(plan.resources).toEqual([{ resourceType: 'Appointment', id: 'appt-1' }]);
+  });
+
+  it('handles slot_taken without tracking an appointment', async () => {
+    const plan = { runTagCode: 'agent-eval-run', resources: [] };
+    const book = vi.fn(async () => ({ ok: false as const, reason: 'slot_taken' as const }));
+    const result = await confirmAndBookTopOption({} as never, { patientId: 'p', option, summaryCommunicationId: 'c' }, plan, { count: 0 }, createAgentTelemetry(), book as never);
+    expect(result.bookingCompleted).toBe(false);
+    expect(plan.resources).toEqual([]);
+  });
+
+  it('labels the first executed scenario cold and later ones warm, and passes booking counters through', async () => {
+    const deps = dependencies({
+      run: vi.fn(async (): Promise<LiveSmokeRunResult> => ({
+        terminalKind: 'options', toolNames: [], loopSteps: 1, displayedOptions: [], availableOptionKeys: [],
+        searchedProviderAliases: [], clarificationAsked: false, sessionResumed: true,
+        confirmationRequested: true, bookingCompleted: true, bookingMutationCount: 1, bookingMutationCountBeforeConfirmation: 0,
+      })),
+    });
+    const executor = createLiveSmokeExecutor(environment, deps);
+    const [first] = [...LIVE_SMOKE_SCENARIO_IDS];
+    const one = await executor.execute(scenario(first), 1);
+    const two = await executor.execute(scenario(first), 2);
+    expect(one.warmth).toBe('cold');
+    expect(two.warmth).toBe('warm');
+    expect(one).toMatchObject({ confirmationRequested: true, bookingCompleted: true, bookingMutationCount: 1, bookingMutationCountBeforeConfirmation: 0 });
   });
 });
