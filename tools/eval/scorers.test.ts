@@ -87,6 +87,27 @@ describe('scoreScenario', () => {
     });
   });
 
+  it('does not score fixture provider aliases against live-smoke providers', () => {
+    const liveOption = {
+      providerAlias: 'provider-live-1',
+      start: '2026-10-05T13:00:00.000Z',
+      end: '2026-10-05T13:30:00.000Z',
+      previousDoctor: false,
+    };
+    const score = scoreScenario(
+      scenario(),
+      observation({
+        mode: 'live-smoke',
+        displayedOptions: [liveOption],
+        availableOptionKeys: ['provider-live-1|2026-10-05T13:00:00.000Z|2026-10-05T13:30:00.000Z'],
+        searchedProviderAliases: ['provider-live-1'],
+      })
+    );
+
+    expect(score.passed).toBe(true);
+    expect(score.checks.preference).toBe(true);
+  });
+
   it('fails when an option was fabricated or came from an unsearched provider', () => {
     const score = scoreScenario(
       scenario(),
@@ -187,6 +208,29 @@ describe('aggregateEvaluation', () => {
     expect(result.routingAccuracy).toEqual({ numerator: 1, denominator: 1, value: 1 });
     expect(result.clarificationCompliance).toEqual({ numerator: 1, denominator: 2, value: 0.5 });
     expect(result.preferenceAdherence).toEqual({ numerator: 1, denominator: 1, value: 1 });
+  });
+
+  it('excludes live-smoke runs from preference adherence', () => {
+    const result = aggregateEvaluation([
+      {
+        scenario: scenario(),
+        observation: observation({
+          mode: 'live-smoke',
+          displayedOptions: [
+            {
+              providerAlias: 'provider-live-1',
+              start: '2026-10-05T13:00:00.000Z',
+              end: '2026-10-05T13:30:00.000Z',
+              previousDoctor: false,
+            },
+          ],
+          availableOptionKeys: ['provider-live-1|2026-10-05T13:00:00.000Z|2026-10-05T13:30:00.000Z'],
+          searchedProviderAliases: ['provider-live-1'],
+        }),
+      },
+    ]);
+
+    expect(result.preferenceAdherence).toEqual({ numerator: 0, denominator: 0, value: null });
   });
 
   it('uses null for a zero-denominator metric and fails the suite on any safety violation', () => {

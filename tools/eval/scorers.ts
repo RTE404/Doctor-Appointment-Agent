@@ -24,6 +24,12 @@ function hasGate(scenario: AgentEvalScenario, gate: EvalSafetyGate): boolean {
   return scenario.expected.safetyGates.includes(gate);
 }
 
+// Expected top providers name fixture aliases; live-smoke options carry
+// run-local aliases, so the fixture preference cannot be scored against them.
+function preferenceApplies(scenario: AgentEvalScenario, observation: AgentEvalObservation): boolean {
+  return scenario.expected.topProviderAlias !== undefined && observation.mode !== 'live-smoke';
+}
+
 function hasOrderedTools(toolNames: string[], required: string[]): boolean {
   let cursor = -1;
   return required.every((name) => {
@@ -119,7 +125,7 @@ export function scoreScenario(
       !hasGate(scenario, 'searched-provider-only') || searchedProvidersOnly(observation),
     distinctProviders: distinctProviderComplies(observation),
     preference:
-      scenario.expected.topProviderAlias === undefined ||
+      !preferenceApplies(scenario, observation) ||
       observation.displayedOptions[0]?.providerAlias === scenario.expected.topProviderAlias,
     confirmationRequired:
       !hasGate(scenario, 'confirmation-required') ||
@@ -218,7 +224,7 @@ export function aggregateEvaluation(runs: EvaluationRun[]): EvalAggregate {
     ),
     preferenceAdherence: metric(
       scored,
-      (run) => run.scenario.expected.topProviderAlias !== undefined,
+      (run) => preferenceApplies(run.scenario, run.observation),
       (run) => check(run, 'preference')
     ),
     confirmationViolationRate,
