@@ -232,13 +232,17 @@ export async function handleExecuteRequest(
   const startedAt = performance.now();
   const response = await handleExecuteRequestUntimed(request, environment, dependencies);
   if (request.method === 'POST') {
-    (dependencies.log ?? logExecuteTiming)({
-      event: 'execute-timing',
-      correlationId: randomUUID(),
-      action: parseEnvelope(request.body)?.action ?? 'invalid',
-      durationMs: Math.round(performance.now() - startedAt),
-      statusClass: `${Math.min(5, Math.max(2, Math.floor(response.status / 100)))}xx` as ExecuteTimingLog['statusClass'],
-    });
+    try {
+      (dependencies.log ?? logExecuteTiming)({
+        event: 'execute-timing',
+        correlationId: randomUUID(),
+        action: parseEnvelope(request.body)?.action ?? 'invalid',
+        durationMs: Math.round(performance.now() - startedAt),
+        statusClass: `${Math.min(5, Math.max(2, Math.floor(response.status / 100)))}xx` as ExecuteTimingLog['statusClass'],
+      });
+    } catch {
+      // Telemetry must never break the request path.
+    }
   }
   return response;
 }

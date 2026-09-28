@@ -363,4 +363,21 @@ describe('execute request timing log', () => {
     expect(log).toHaveBeenCalledTimes(1);
     expect(log.mock.calls[0][0]).toMatchObject({ action: 'invalid', statusClass: '4xx' });
   });
+
+  test('returns the untimed response unchanged when the log sink throws', async () => {
+    const log = vi.fn(() => {
+      throw new Error('sink down');
+    });
+    const dependencies = { ...createDependencies(createHandlers().handlers), log };
+    const response = await handleExecuteRequest(
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer browser-token' },
+        body: { action: 'agent-booking-chat', input: { patientId: 'patient-secret-id', message: 'chest pain' } },
+      },
+      environment,
+      dependencies
+    );
+    expect(response).toEqual({ status: 200, body: { action: 'agent-booking-chat' } });
+  });
 });
