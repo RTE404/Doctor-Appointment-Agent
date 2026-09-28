@@ -63,7 +63,7 @@ export function categorizeError(error: unknown): StageErrorCategory {
   if (error.name === 'AbortError' || error.name === 'TimeoutError') return 'timeout';
   const status = (error as { status?: unknown }).status;
   if (typeof status === 'number') return statusCategory(status);
-  const match = /request failed: (\d{3})\b/.exec(error.message);
+  const match = /failed: (\d{3})\b/.exec(error.message);
   return match ? statusCategory(Number(match[1])) : 'unknown';
 }
 

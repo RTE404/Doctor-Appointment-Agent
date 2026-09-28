@@ -87,6 +87,7 @@ describe('categorizeError', () => {
     expect(categorizeError(Object.assign(new Error('x'), { status: 404 }))).toBe('http-4xx');
     expect(categorizeError(new Error('Gemini request failed: 429'))).toBe('http-4xx');
     expect(categorizeError(new Error('Gemini request failed: 502'))).toBe('http-5xx');
+    expect(categorizeError(new Error('NPPES search failed: 503'))).toBe('http-5xx');
     expect(categorizeError(new Error('something else'))).toBe('unknown');
     expect(categorizeError('not an error')).toBe('unknown');
   });
