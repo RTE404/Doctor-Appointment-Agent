@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { parseCliArgs, runCli, runEvaluation } from './runAgentEval';
+import { buildLimitations, parseCliArgs, runCli, runEvaluation } from './runAgentEval';
 import type { AgentEvalCatalog, AgentEvalObservation } from './types';
 
 const catalog: AgentEvalCatalog = {
@@ -126,6 +126,24 @@ describe('parseCliArgs', () => {
     expect(() =>
       parseCliArgs(['--scenario', 'case-a', '--category', 'routing-clarification'])
     ).toThrow('cannot be combined');
+  });
+});
+
+describe('buildLimitations', () => {
+  it('notes that model-layer summary.write and session.persist stage timings are in-memory stubs', () => {
+    expect(buildLimitations('model')).toEqual([
+      'Controlled tools use synthetic fixtures and do not verify a live Medplum deployment.',
+      'Model-layer stage timings for summary.write and session.persist are in-memory stubs; turn.total rows are empty because the model executor drives the loop directly, not the bot handler.',
+    ]);
+  });
+
+  it('leaves live-smoke and deterministic limitations unchanged', () => {
+    expect(buildLimitations('live-smoke')).toEqual([
+      'This is an eight-scenario synthetic integration smoke, not a load test.',
+    ]);
+    expect(buildLimitations('deterministic')).toEqual([
+      'Model-dependent language quality is reported separately.',
+    ]);
   });
 });
 

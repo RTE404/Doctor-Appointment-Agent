@@ -135,6 +135,19 @@ function selectScenarios(catalog: AgentEvalCatalog, options: EvalCliOptions): Ag
   return { ...catalog, scenarios };
 }
 
+export function buildLimitations(mode: AgentEvalObservation['mode']): string[] {
+  if (mode === 'model') {
+    return [
+      'Controlled tools use synthetic fixtures and do not verify a live Medplum deployment.',
+      'Model-layer stage timings for summary.write and session.persist are in-memory stubs; turn.total rows are empty because the model executor drives the loop directly, not the bot handler.',
+    ];
+  }
+  if (mode === 'live-smoke') {
+    return ['This is an eight-scenario synthetic integration smoke, not a load test.'];
+  }
+  return ['Model-dependent language quality is reported separately.'];
+}
+
 export async function runCli(args: string[]): Promise<void> {
   const options = parseCliArgs(args);
   let catalog = selectScenarios(loadScenarioCatalog('data/evals/booking-scenarios.json'), options);
@@ -186,12 +199,7 @@ export async function runCli(args: string[]): Promise<void> {
     command: 'npx tsx tools/eval/runAgentEval.ts ' + args.join(' '),
     gitCommit: execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim(),
     nodeVersion: process.version,
-    limitations:
-      options.mode === 'model'
-        ? ['Controlled tools use synthetic fixtures and do not verify a live Medplum deployment.']
-        : options.mode === 'live-smoke'
-          ? ['This is an eight-scenario synthetic integration smoke, not a load test.']
-          : ['Model-dependent language quality is reported separately.'],
+    limitations: buildLimitations(options.mode),
     ...(performance ? { performance } : {}),
   });
   const reportFiles = writeReportFiles(options.output, report);
