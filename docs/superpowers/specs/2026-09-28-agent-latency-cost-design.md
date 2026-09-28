@@ -86,15 +86,17 @@ interface ModelUsageRecord {
 }
 
 interface AgentTelemetry {
-  time<T>(stage: AgentStage, work: () => Promise<T>): Promise<T>;
+  time<T>(stage: AgentStage, work: () => Promise<T>, options?: { isErrorResult?: (result: T) => boolean }): Promise<T>;
   recordModelUsage(usage: ModelUsageRecord): void;
   snapshot(): { stages: StageRecord[]; modelCalls: ModelUsageRecord[] };
 }
 ```
 
 - `createAgentTelemetry(clock?)` uses `performance.now()` by default; tests inject a fake clock.
-- `time` records `ok` on resolve and `error` with a sanitized category on throw, then rethrows unchanged. A tool
-  result shaped `{ error }` is recorded as `error` with category `validation`.
+- `time` records `ok` on resolve and `error` with a sanitized category on throw, then rethrows unchanged. When
+  `isErrorResult` returns true for a resolved value (used for tool results shaped `{ error }`), the stage is recorded
+  as `error` with category `validation` and the value is returned unchanged.
+- `timeout` is assigned only to errors named `AbortError` or `TimeoutError`; Phase 2 adds no new timeouts of its own.
 - `noopTelemetry` is the default everywhere, so production behavior and output are unchanged unless a caller supplies
   a recorder.
 - Error categories are derived from HTTP status or error class only; error messages are never stored.
@@ -110,16 +112,22 @@ interface AgentTelemetry {
 - **Tools (`bookingChatTools.ts`):** tool functions receive the recorder. `search_previous_physician` and
   `search_nppes` are timed as whole stages; `check_availability` is split into `tool.provider-reconcile`
   (`ensurePractitionerAndSchedule` and rereads) and `tool.find` (`$find`).
-- **Booking (`agent-book-appointment.ts`):** rereads, the `$find` recheck, `$book`, and summary linking, plus the
-  total. No validation or ordering changes.
-- **API (`api/execute.ts`):** records only the action name, total duration, and HTTP status class, emitted as one
-  structured log line per request. No bodies, tokens, IDs, or headers.
+- **Booking (`agent-book-appointment.ts`):** the handler accepts an optional recorder as a third parameter.
+  `booking.reread` covers the Patient, Practitioner, Schedule, and summary reads plus the Device, PractitionerRole, and
+  HealthcareService lookups; then `booking.find-recheck`, `booking.book`, `booking.link`, and `booking.total`. No
+  validation or ordering changes.
+- **API (`api/execute.ts`):** records only a random per-request correlation ID (not derived from any input), the
+  action name, total duration, and HTTP status class, emitted as one structured log line per request. No bodies,
+  tokens, resource IDs, or headers.
 - The existing trace events are unchanged; eval executors combine trace events and telemetry snapshots.
 
 ### 3. Tokens and cost
 
-- `callGeminiBookingModel` returns `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`) when present and the
-  retry count, and the loop records it per model call.
+- `callGeminiBookingModel` additionally returns `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`) when
+  present and `retries`. The loop runtime's `callModel` return type gains the same optional fields, and the loop
+  calls `recordModelUsage` once per model call. Existing callers that ignore the new fields are unaffected.
+- `model.call` duration includes any retry backoff; reports show retry counts beside model-call latency so a
+  retry-inflated p95 is visible rather than hidden.
 - If a response lacks `usage`, the call is recorded with absent token fields; reports show the count of calls missing
   usage and never estimate tokens from characters.
 - `tools/eval/pricing.json` holds `{ model, inputPerMillionUsd, outputPerMillionUsd, source, retrievedOn }`, filled
@@ -129,14 +137,16 @@ interface AgentTelemetry {
 ### 4. Eval and report extensions
 
 - `AgentEvalObservation` gains optional `telemetry` (stage records and model usage) and `warmth` (`cold` | `warm`).
+- Deterministic mode records no telemetry, so its reports stay byte-stable as Phase 1 requires. Only model and
+  live-smoke modes attach telemetry.
 - `aggregateEvaluation` adds, per layer:
   - p50, p95, maximum, and sample count for every stage with samples (nearest-rank percentiles; a stage with fewer
     than 20 samples shows its count and is labeled low-sample instead of hiding p95);
   - end-to-end turn p50/p95 split by terminal kind (question, options), and booking total p50/p95;
   - mean and distribution of model calls, tool calls, and loop steps per turn;
-  - mean prompt, completion, and total tokens per turn and per completed booking (tokens of the turns that produced
-    the booked options);
-  - cost per turn and per completed booking from `pricing.json`;
+  - mean prompt, completion, and total tokens per turn and per options turn (model layer), and per completed booking
+    (live layer only: tokens of the turn that produced the booked option);
+  - cost per turn, per options turn, and per completed booking from `pricing.json`;
   - retry count, dependency-failure rate by stage, and step-cap rate.
 - JSON and Markdown reports include these sections; the existing privacy scan extends to them.
 - Existing Phase 1 metrics and safety gates are unchanged and remain release-blocking.
@@ -146,9 +156,13 @@ interface AgentTelemetry {
 - For each live scenario that ends in `options`, the executor issues an explicit confirmation step and calls the real
   `agent-book-appointment` handler with the top displayed option, the scenario's synthetic patient, and the summary
   `Communication` from that turn.
-- The tracking client is extended so a `$book` request adds the run tag to the proposed Appointment's `meta` before
-  it is sent, and records the returned Appointment for cleanup. Cleanup already verifies the run tag, `$cancel`s
-  booked or pending appointments (releasing the slot), and deletes tracked resources in reverse order.
+- The tracking client is extended so a `post` to `Appointment/$book` adds the run tag to the Appointment inside the
+  `Parameters` body before it is sent. The executor records the booked Appointment ID from the handler's
+  `{ ok: true, appointment }` result for cleanup. Cleanup already verifies the run tag, `$cancel`s booked or pending
+  appointments (releasing the slot, as the nightly reset does), and deletes tracked resources in reverse order, so the
+  booked Appointment is removed before the summary `Communication` the booking handler updated.
+- If Medplum's `$book` does not preserve the run tag, cleanup refuses the booked Appointment and the run fails. That is
+  a stop-and-report outcome: the cleanup tag check is never weakened to get past it.
 - Booking observations become real rather than hard-coded: `bookingMutationCount` counts `$book` calls observed by
   the proxy, `bookingMutationCountBeforeConfirmation` counts those observed before the executor's confirmation step,
   and `confirmationRequested` is true only when that step ran.
@@ -208,5 +222,5 @@ After the baseline is published:
 - At least one measured latency bottleneck and one measured token bottleneck are addressed, or one change is shown to
   address both.
 - Phase 1 safety gates pass before and after; no hidden task-success regression in either eval layer.
-- The targets (≥20% lower live p95 option-search latency, ≥20% lower tokens or cost per completed booking, lower
+- The targets (≥20% lower live p95 `turn.total` for turns ending in options, ≥20% lower tokens or cost per completed booking, lower
   step-cap frequency) are reported honestly whether or not they are met.
