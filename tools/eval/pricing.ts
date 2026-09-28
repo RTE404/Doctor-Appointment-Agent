@@ -36,7 +36,7 @@ export function loadPricing(path = 'tools/eval/pricing.json'): PricingTable {
 export function billableOutputTokens(usage: ModelUsageRecord): number | undefined {
   const hiddenInclusive =
     usage.totalTokens !== undefined && usage.promptTokens !== undefined
-      ? usage.totalTokens - usage.promptTokens
+      ? Math.max(0, usage.totalTokens - usage.promptTokens)
       : undefined;
   if (usage.completionTokens === undefined) return hiddenInclusive;
   return hiddenInclusive === undefined ? usage.completionTokens : Math.max(usage.completionTokens, hiddenInclusive);

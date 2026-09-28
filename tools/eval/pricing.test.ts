@@ -19,6 +19,10 @@ describe('pricing', () => {
     expect(billableOutputTokens({ retries: 0 })).toBeUndefined();
   });
 
+  it('clamps a negative hidden-token delta at zero instead of billing negative output', () => {
+    expect(billableOutputTokens({ promptTokens: 100, totalTokens: 50, retries: 0 })).toBe(0);
+  });
+
   it('computes cost from prompt and billable output tokens and refuses to estimate missing usage', () => {
     expect(costUsd({ promptTokens: 1_000_000, completionTokens: 1_000_000, totalTokens: 2_000_000, retries: 0 }, price))
       .toBeCloseTo(2.8, 10);
