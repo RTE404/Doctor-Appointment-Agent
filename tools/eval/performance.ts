@@ -153,7 +153,7 @@ export function summarizePerformance(
       question: summarizeDurations(warm.filter((o) => o.terminalKind === 'question').flatMap((o) => stageTotal(o, 'turn.total') ?? [])),
       options: summarizeDurations(warm.filter((o) => o.terminalKind === 'options').flatMap((o) => stageTotal(o, 'turn.total') ?? [])),
     },
-    bookingTotal: summarizeDurations(measured.flatMap((o) => stageTotal(o, 'booking.total') ?? [])),
+    bookingTotal: summarizeDurations(warm.flatMap((o) => stageTotal(o, 'booking.total') ?? [])),
     efficiency: {
       meanModelCalls: mean(measured.map((o) => o.telemetry?.modelCalls.length ?? 0)),
       meanToolCalls: mean(measured.map((o) => o.toolNames.length)),

@@ -100,4 +100,22 @@ describe('summarizePerformance', () => {
     expect(summary.tokens.meanTotalPerCompletedBooking).toBe(15);
     expect(summary.bookingTotal).toMatchObject({ count: 1, p50: 700 });
   });
+
+  it('excludes a cold observation booking.total from bookingTotal, consistent with every other latency', () => {
+    const summary = summarizePerformance(
+      [
+        observation({
+          warmth: 'cold',
+          telemetry: { stages: [{ stage: 'booking.total', durationMs: 5000, outcome: 'ok' }], modelCalls: [] },
+        }),
+        observation({
+          warmth: 'warm',
+          telemetry: { stages: [{ stage: 'booking.total', durationMs: 300, outcome: 'ok' }], modelCalls: [] },
+        }),
+      ],
+      pricing,
+      'gemini-3.5-flash-lite'
+    );
+    expect(summary.bookingTotal).toMatchObject({ count: 1, p50: 300 });
+  });
 });
