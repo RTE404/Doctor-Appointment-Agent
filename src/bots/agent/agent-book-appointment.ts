@@ -3,6 +3,8 @@ import type { BotEvent, MedplumClient } from '@medplum/core';
 import { OperationOutcomeError } from '@medplum/core';
 import type { Appointment, Bundle, Communication, Schedule, Slot } from '@medplum/fhirtypes';
 import { withDemoGeneratedTag } from '../../demo/demoTag.js';
+import { noopTelemetry } from './lib/agentTelemetry.js';
+import type { AgentTelemetry } from './lib/agentTelemetry.js';
 
 export type BookInput = {
   patientId: string;
@@ -74,15 +76,24 @@ function extractBookedAppointment(bundle: Bundle): Appointment {
   return appointment;
 }
 
-export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>): Promise<BookResult> {
-  const { patientId, practitionerId, scheduleId, start, end, summaryCommunicationId } = event.input;
+export async function handler(
+  medplum: MedplumClient,
+  event: BotEvent<BookInput>,
+  telemetry: AgentTelemetry = noopTelemetry
+): Promise<BookResult> {
+  return telemetry.time('booking.total', () => bookWithTelemetry(medplum, event.input, telemetry));
+}
+
+async function bookWithTelemetry(medplum: MedplumClient, input: BookInput, telemetry: AgentTelemetry): Promise<BookResult> {
+  const { patientId, practitionerId, scheduleId, start, end, summaryCommunicationId } = input;
+  const reread = <T>(work: () => Promise<T>): Promise<T> => telemetry.time('booking.reread', work);
 
   // All authority comes from server-side FHIR resources. These reads also
   // prove that every submitted id resolves in the active project.
-  await medplum.readResource('Patient', patientId);
-  await medplum.readResource('Practitioner', practitionerId);
-  const schedule = await medplum.readResource('Schedule', scheduleId);
-  const summary = await medplum.readResource('Communication', summaryCommunicationId);
+  await reread(() => medplum.readResource('Patient', patientId));
+  await reread(() => medplum.readResource('Practitioner', practitionerId));
+  const schedule = await reread(() => medplum.readResource('Schedule', scheduleId));
+  const summary = await reread(() => medplum.readResource('Communication', summaryCommunicationId));
 
   // Checked before resolving the agent Device below so a mismatched
   // summary (wrong Patient/status/category/tag) fails fast without an
@@ -99,9 +110,11 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
   // Device id is server-assigned (seeded via POST + ifNoneExist), never a
   // literal — resolved the same way agent-booking-chat.ts resolves it when
   // it writes this same sender field onto the pre-visit summary.
-  const agentDevice = await medplum.searchOne('Device', {
-    identifier: 'http://example.com/agent-config|ai-appointment-agent',
-  });
+  const agentDevice = await reread(() =>
+    medplum.searchOne('Device', {
+      identifier: 'http://example.com/agent-config|ai-appointment-agent',
+    })
+  );
   if (!agentDevice?.id || summary.sender?.reference !== `Device/${agentDevice.id}`) {
     throw new Error('The intake Communication is not an authoritative preparation summary for this Patient');
   }
@@ -111,9 +124,11 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
   if (!reason || !complaintText || !specialtyCode) {
     throw new Error('The intake Communication is missing its booking reason, original complaint, or normalized specialty');
   }
-  const practitionerRoles = await medplum.searchResources('PractitionerRole', {
-    practitioner: `Practitioner/${practitionerId}`,
-  });
+  const practitionerRoles = await reread(() =>
+    medplum.searchResources('PractitionerRole', {
+      practitioner: `Practitioner/${practitionerId}`,
+    })
+  );
   const specialtyMatches = practitionerRoles.some((role) =>
     role.specialty?.some((specialty) =>
       specialty.coding?.some(
@@ -128,7 +143,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
   // Id is server-assigned (seeded via POST + ifNoneExist), never a
   // literal — resolved the same way ensurePractitionerAndSchedule.ts
   // resolves it when it writes this same service onto the Schedule.
-  const officeVisit = await medplum.searchOne('HealthcareService', { name: 'Office Visit' });
+  const officeVisit = await reread(() => medplum.searchOne('HealthcareService', { name: 'Office Visit' }));
   if (!officeVisit?.id) {
     throw new Error('The Office Visit HealthcareService is not configured');
   }
@@ -149,7 +164,7 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
   findUrl.searchParams.set('start', start);
   findUrl.searchParams.set('end', end);
   findUrl.searchParams.set('_count', '20');
-  const findBundle = await medplum.get<Bundle<Appointment>>(findUrl);
+  const findBundle = await telemetry.time('booking.find-recheck', () => medplum.get<Bundle<Appointment>>(findUrl));
   const proposedAppointment = (findBundle.entry ?? [])
     .map((entry) => entry.resource)
     .find((resource): resource is Appointment => resource?.resourceType === 'Appointment' && resource.start === start && resource.end === end);
@@ -169,10 +184,12 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
 
   let bookedAppointment: Appointment;
   try {
-    const response = (await medplum.post(medplum.fhirUrl('Appointment', '$book'), {
-      resourceType: 'Parameters',
-      parameter: [{ name: 'appointment', resource: appointmentToBook }],
-    })) as Bundle;
+    const response = (await telemetry.time('booking.book', () =>
+      medplum.post(medplum.fhirUrl('Appointment', '$book'), {
+        resourceType: 'Parameters',
+        parameter: [{ name: 'appointment', resource: appointmentToBook }],
+      })
+    )) as Bundle;
     bookedAppointment = extractBookedAppointment(response);
   } catch (err) {
     if (err instanceof OperationOutcomeError) {
@@ -198,13 +215,15 @@ export async function handler(medplum: MedplumClient, event: BotEvent<BookInput>
     // A bare {id, recipient, about, status, sent} object here would
     // silently wipe category, subject, sender, payload (the summary text
     // itself), and meta.tag.
-    await medplum.updateResource<Communication>({
-      ...summary,
-      recipient: practitionerRef ? [{ reference: practitionerRef }] : summary.recipient,
-      about: [{ reference: `Appointment/${bookedAppointment.id}` }],
-      status: 'completed',
-      sent: new Date().toISOString(),
-    });
+    await telemetry.time('booking.link', () =>
+      medplum.updateResource<Communication>({
+        ...summary,
+        recipient: practitionerRef ? [{ reference: practitionerRef }] : summary.recipient,
+        about: [{ reference: `Appointment/${bookedAppointment.id}` }],
+        status: 'completed',
+        sent: new Date().toISOString(),
+      })
+    );
   } catch (_err) {
     console.error('Booking succeeded but post-booking metadata update failed');
   }

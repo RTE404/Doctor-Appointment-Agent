@@ -6,6 +6,7 @@ import type { Bundle as FhirBundle, SearchParameter } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import { handler } from './agent-book-appointment';
 import type { Appointment } from '@medplum/fhirtypes';
+import { createAgentTelemetry } from './lib/agentTelemetry.js';
 
 // The handler searches PractitionerRole.practitioner — not indexed by a
 // bare MockClient. See patientContext.test.ts for the same fix and its
@@ -269,5 +270,155 @@ describe('agent-book-appointment handler', () => {
     ).rejects.toThrow(/not an authoritative preparation summary/);
     expect(getSpy.mock.calls.some(([url]) => url.toString().includes('/fhir/R4/Appointment/$find'))).toBe(false);
     expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  test('records telemetry stages for a successful booking', async () => {
+    const medplum = new MockClient();
+    const patient = await medplum.updateResource({ resourceType: 'Patient', id: 'patient-1' });
+    await medplum.updateResource({ resourceType: 'Practitioner', id: 'practitioner-1' });
+    await medplum.createResource({
+      resourceType: 'PractitionerRole',
+      practitioner: { reference: 'Practitioner/practitioner-1' },
+      specialty: [{ coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] }],
+    });
+    const officeVisit = await medplum.createResource({ resourceType: 'HealthcareService', name: 'Office Visit', active: true });
+    const agentDevice = await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
+    await medplum.updateResource({
+      resourceType: 'Schedule',
+      id: 'schedule-1',
+      active: true,
+      actor: [{ reference: 'Practitioner/practitioner-1' }],
+      serviceType: [{ extension: [{ url: 'https://medplum.com/fhir/service-type-reference', valueReference: { reference: `HealthcareService/${officeVisit.id}` } }] }],
+    });
+    const communication = await medplum.createResource({
+      resourceType: 'Communication',
+      status: 'preparation',
+      category: [{ coding: [{ system: 'http://example.com/agent-communication-category', code: 'ai-previsit-summary' }] }],
+      reasonCode: [{ text: 'Chest discomfort during exercise' }],
+      note: [{ text: 'My chest hurts when I run' }],
+      topic: { coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] },
+      subject: { reference: `Patient/${patient.id}` },
+      sender: { reference: `Device/${agentDevice.id}` },
+      payload: [{ contentString: 'This patient reports exertional chest discomfort.' }],
+      meta: { tag: [{ code: 'ai-generated' }] },
+    });
+
+    const bookedAppointment: Appointment = {
+      ...PROPOSED_APPOINTMENT,
+      id: 'appt-1',
+      status: 'booked',
+      contained: undefined,
+      slot: [{ reference: 'Slot/slot-1' }],
+      description: 'Chest discomfort during exercise',
+      comment: 'My chest hurts when I run',
+      reasonCode: [{ text: 'Chest discomfort during exercise' }],
+    };
+    const bookResponseBundle = {
+      resourceType: 'Bundle',
+      type: 'transaction-response',
+      entry: [{ resource: bookedAppointment }, { resource: { resourceType: 'Slot', id: 'slot-1', status: 'busy' } }],
+    };
+    const originalGet = medplum.get.bind(medplum);
+    vi.spyOn(medplum, 'get').mockImplementation((async (url: string | URL, options?: any) => {
+      if (url.toString().includes('/fhir/R4/Appointment/$find')) {
+        return { resourceType: 'Bundle', type: 'searchset', entry: [{ resource: PROPOSED_APPOINTMENT }] } as any;
+      }
+      return originalGet(url as any, options);
+    }) as any);
+    vi.spyOn(medplum, 'post').mockImplementation(async (url: string | URL, _body: any) => {
+      if (url.toString() === medplum.fhirUrl('Appointment', '$book').toString()) {
+        return bookResponseBundle as any;
+      }
+      throw new Error(`unexpected post to ${url}`);
+    });
+
+    const telemetry = createAgentTelemetry();
+    const result = await handler(
+      medplum,
+      {
+        bot: { reference: 'Bot/123' },
+        input: { ...BASE_INPUT, patientId: patient.id as string, summaryCommunicationId: communication.id as string },
+        contentType: 'application/json',
+        secrets: {},
+      },
+      telemetry
+    );
+
+    expect(result.ok).toBe(true);
+    const stages = telemetry.snapshot().stages.map((entry) => entry.stage);
+    expect(stages.filter((stage) => stage === 'booking.reread').length).toBeGreaterThanOrEqual(1);
+    expect(stages).toContain('booking.find-recheck');
+    expect(stages).toContain('booking.book');
+    expect(stages).toContain('booking.link');
+    expect(stages.at(-1)).toBe('booking.total');
+  });
+
+  test('records booking.total but not booking.book when $find has no matching slot', async () => {
+    const medplum = new MockClient();
+    const patient = await medplum.updateResource({ resourceType: 'Patient', id: 'patient-1' });
+    await medplum.updateResource({ resourceType: 'Practitioner', id: 'practitioner-1' });
+    await medplum.createResource({
+      resourceType: 'PractitionerRole',
+      practitioner: { reference: 'Practitioner/practitioner-1' },
+      specialty: [{ coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] }],
+    });
+    const officeVisit = await medplum.createResource({ resourceType: 'HealthcareService', name: 'Office Visit', active: true });
+    const agentDevice = await medplum.createResource({
+      resourceType: 'Device',
+      identifier: [{ system: 'http://example.com/agent-config', value: 'ai-appointment-agent' }],
+    });
+    await medplum.updateResource({
+      resourceType: 'Schedule',
+      id: 'schedule-1',
+      active: true,
+      actor: [{ reference: 'Practitioner/practitioner-1' }],
+      serviceType: [{ extension: [{ url: 'https://medplum.com/fhir/service-type-reference', valueReference: { reference: `HealthcareService/${officeVisit.id}` } }] }],
+    });
+    const communication = await medplum.createResource({
+      resourceType: 'Communication',
+      status: 'preparation',
+      category: [{ coding: [{ system: 'http://example.com/agent-communication-category', code: 'ai-previsit-summary' }] }],
+      reasonCode: [{ text: 'Chest discomfort during exercise' }],
+      note: [{ text: 'My chest hurts when I run' }],
+      topic: { coding: [{ system: 'http://nucc.org/provider-taxonomy', code: '207RC0000X' }] },
+      subject: { reference: `Patient/${patient.id}` },
+      sender: { reference: `Device/${agentDevice.id}` },
+      payload: [{ contentString: 'This patient reports exertional chest discomfort.' }],
+      meta: { tag: [{ code: 'ai-generated' }] },
+    });
+
+    const originalGet = medplum.get.bind(medplum);
+    vi.spyOn(medplum, 'get').mockImplementation((async (url: string | URL, options?: any) => {
+      if (url.toString().includes('/fhir/R4/Appointment/$find')) {
+        // No entry matches the requested start/end — the slot was taken by
+        // the time this re-check ran.
+        return { resourceType: 'Bundle', type: 'searchset', entry: [] } as any;
+      }
+      return originalGet(url as any, options);
+    }) as any);
+    const postSpy = vi.spyOn(medplum, 'post');
+
+    const telemetry = createAgentTelemetry();
+    const result = await handler(
+      medplum,
+      {
+        bot: { reference: 'Bot/123' },
+        input: { ...BASE_INPUT, patientId: patient.id as string, summaryCommunicationId: communication.id as string },
+        contentType: 'application/json',
+        secrets: {},
+      },
+      telemetry
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ok:false');
+    expect(result.reason).toBe('slot_taken');
+    expect(postSpy).not.toHaveBeenCalled();
+    const stages = telemetry.snapshot().stages.map((entry) => entry.stage);
+    expect(stages).not.toContain('booking.book');
+    expect(telemetry.snapshot().stages.at(-1)).toMatchObject({ stage: 'booking.total', outcome: 'ok' });
   });
 });
