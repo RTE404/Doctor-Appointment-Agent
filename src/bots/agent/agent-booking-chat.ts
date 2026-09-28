@@ -26,7 +26,8 @@ interface GeminiToolResponse {
   message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
 }
 
-const GEMINI_429_RETRY_DELAYS_MS = [1_000, 4_000, 16_000, 60_000] as const;
+const GEMINI_RETRY_DELAYS_MS = [1_000, 4_000, 16_000, 60_000] as const;
+const RETRYABLE_GEMINI_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 type GeminiToolCaller = (transcript: BookingChatMessage[], apiKey: string) => Promise<GeminiToolResponse>;
 
@@ -41,7 +42,7 @@ export async function callGeminiBookingModel(
   transcript: BookingChatMessage[],
   apiKey: string
 ): Promise<GeminiToolResponse> {
-  for (let attempt = 0; attempt <= GEMINI_429_RETRY_DELAYS_MS.length; attempt += 1) {
+  for (let attempt = 0; attempt <= GEMINI_RETRY_DELAYS_MS.length; attempt += 1) {
     const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -56,11 +57,11 @@ export async function callGeminiBookingModel(
       const body = await response.json();
       return { message: body.choices[0].message };
     }
-    if (response.status !== 429 || attempt === GEMINI_429_RETRY_DELAYS_MS.length) {
+    if (!RETRYABLE_GEMINI_STATUSES.has(response.status) || attempt === GEMINI_RETRY_DELAYS_MS.length) {
       throw new Error(`Gemini request failed: ${response.status}`);
     }
     await new Promise((resolve) => {
-      setTimeout(resolve, GEMINI_429_RETRY_DELAYS_MS[attempt] + Math.random() * 250);
+      setTimeout(resolve, GEMINI_RETRY_DELAYS_MS[attempt] + Math.random() * 250);
     });
   }
   throw new Error('Gemini request retry loop exhausted');
