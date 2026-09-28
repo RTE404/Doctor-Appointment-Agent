@@ -1,11 +1,12 @@
 import type { BotEvent, MedplumClient } from '@medplum/core';
+import type * as NodeCrypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, test, vi } from 'vitest';
 
 const { correlationIdCallOrder } = vi.hoisted(() => ({ correlationIdCallOrder: [] as string[] }));
 vi.mock('node:crypto', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:crypto')>();
+  const actual = await importOriginal<typeof NodeCrypto>();
   return {
     ...actual,
     randomUUID: (...args: Parameters<typeof actual.randomUUID>) => {
