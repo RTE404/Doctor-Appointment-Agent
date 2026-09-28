@@ -2,6 +2,8 @@ import type { BookableOption } from './bookableOptions.js';
 import type { BookingChatMessage, BookingSession, BookingToolCall } from './bookingSession.js';
 import { resolveProposedOptions } from './proposeOptions.js';
 import type { ProposeOptionsArgs } from './proposeOptions.js';
+import { noopTelemetry } from './agentTelemetry.js';
+import type { AgentTelemetry } from './agentTelemetry.js';
 
 export type BookingChatLoopResult =
   | { kind: 'question'; sessionId: string; reply: string }
@@ -14,14 +16,25 @@ export type BookingChatTraceEvent =
   | { type: 'tool-result'; step: number; toolName: string; outcome: 'ok' | 'error' | 'skipped' }
   | { type: 'terminal'; step: number; kind: 'question' | 'options' | 'step-cap' };
 
+export interface GeminiUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
+
+export interface BookingChatModelResponse {
+  message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
+  usage?: GeminiUsage;
+  retries?: number;
+}
+
 export interface BookingChatLoopRuntime {
-  callModel(transcript: BookingChatMessage[]): Promise<{
-    message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
-  }>;
+  callModel(transcript: BookingChatMessage[]): Promise<BookingChatModelResponse>;
   executeTool(name: string, args: Record<string, unknown>, transcript: BookingChatMessage[]): Promise<unknown>;
   writeSummary(resolved: Extract<ReturnType<typeof resolveProposedOptions>, { ok: true }>): Promise<string>;
   persist(session: BookingSession, status: 'in-progress' | 'completed' | 'stopped'): Promise<void>;
   onTrace?(event: BookingChatTraceEvent): void;
+  telemetry?: AgentTelemetry;
 }
 
 export const MAX_TOOL_LOOP_STEPS = 8;
@@ -58,10 +71,19 @@ export async function runBookingChatLoop(
   runtime: BookingChatLoopRuntime
 ): Promise<BookingChatLoopResult> {
   let session = initialSession;
+  const telemetry = runtime.telemetry ?? noopTelemetry;
+  const persist = (current: BookingSession): Promise<void> =>
+    telemetry.time('session.persist', () => runtime.persist(current, 'in-progress'));
 
   for (let step = 0; step < MAX_TOOL_LOOP_STEPS; step++) {
     runtime.onTrace?.({ type: 'model-call', step });
-    const response = await runtime.callModel(session.transcript);
+    const response = await telemetry.time('model.call', () => runtime.callModel(session.transcript));
+    telemetry.recordModelUsage({
+      promptTokens: response.usage?.prompt_tokens,
+      completionTokens: response.usage?.completion_tokens,
+      totalTokens: response.usage?.total_tokens,
+      retries: response.retries ?? 0,
+    });
     const toolCalls = response.message.tool_calls ?? [];
     runtime.onTrace?.({ type: 'model-response', step, toolNames: toolCalls.map((call) => call.function.name) });
 
@@ -70,7 +92,7 @@ export async function runBookingChatLoop(
         ...session,
         transcript: [...session.transcript, { role: 'assistant', content: response.message.content }],
       };
-      await runtime.persist(session, 'in-progress');
+      await persist(session);
       runtime.onTrace?.({ type: 'terminal', step, kind: 'question' });
       return { kind: 'question', sessionId: session.communication.id as string, reply: response.message.content ?? '' };
     }
@@ -108,7 +130,7 @@ export async function runBookingChatLoop(
           ...session,
           transcript: appendHandledAndSkipped(session.transcript, toolCalls, index, 'ok', step, runtime),
         };
-        await runtime.persist(session, 'in-progress');
+        await persist(session);
         runtime.onTrace?.({ type: 'terminal', step, kind: 'question' });
         return {
           kind: 'question',
@@ -118,7 +140,9 @@ export async function runBookingChatLoop(
       }
 
       if (call.function.name === 'propose_options') {
-        const resolved = resolveProposedOptions(session.transcript, args as unknown as ProposeOptionsArgs);
+        const resolved = await telemetry.time('options.resolve', async () =>
+          resolveProposedOptions(session.transcript, args as unknown as ProposeOptionsArgs)
+        );
         if (!resolved.ok) {
           session = {
             ...session,
@@ -141,12 +165,12 @@ export async function runBookingChatLoop(
           runtime.onTrace?.({ type: 'tool-result', step, toolName: 'propose_options', outcome: 'error' });
           continue;
         }
-        const summaryCommunicationId = await runtime.writeSummary(resolved);
+        const summaryCommunicationId = await telemetry.time('summary.write', () => runtime.writeSummary(resolved));
         session = {
           ...session,
           transcript: appendHandledAndSkipped(session.transcript, toolCalls, index, { ok: true }, step, runtime),
         };
-        await runtime.persist(session, 'in-progress');
+        await persist(session);
         runtime.onTrace?.({ type: 'terminal', step, kind: 'options' });
         return {
           kind: 'options',
@@ -182,7 +206,7 @@ export async function runBookingChatLoop(
     }
   }
 
-  await runtime.persist(session, 'in-progress');
+  await persist(session);
   runtime.onTrace?.({ type: 'terminal', step: MAX_TOOL_LOOP_STEPS, kind: 'step-cap' });
   return {
     kind: 'question',

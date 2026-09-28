@@ -1,8 +1,9 @@
-import { expect, test, vi } from 'vitest';
+import { describe, expect, it, test, vi } from 'vitest';
 import type { Communication } from '@medplum/fhirtypes';
 import { runBookingChatLoop } from './bookingChatLoop';
 import type { BookingChatLoopRuntime, BookingChatTraceEvent } from './bookingChatLoop';
 import type { BookingSession, BookingToolCall } from './bookingSession';
+import { createAgentTelemetry } from './agentTelemetry';
 
 function session(): BookingSession {
   return {
@@ -64,4 +65,37 @@ test('records a question terminal without putting message content in the trace',
     { type: 'terminal', step: 0, kind: 'question' },
   ]);
   expect(JSON.stringify(trace)).not.toContain('Which specialty?');
+});
+
+describe('runBookingChatLoop telemetry', () => {
+  it('times each model call, records usage, and marks missing usage as absent', async () => {
+    const telemetry = createAgentTelemetry();
+    const responses = [
+      {
+        message: { role: 'assistant' as const, content: null, tool_calls: [
+          { id: 'c1', type: 'function' as const, function: { name: 'search_nppes', arguments: '{"specialtyCode":"207RC0000X"}' } },
+        ] },
+        usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 },
+        retries: 0,
+      },
+      { message: { role: 'assistant' as const, content: 'Which day works?' } },
+    ];
+    await runBookingChatLoop(
+      { communication: { resourceType: 'Communication', id: 'session-1' } as Communication, transcript: [] },
+      {
+        callModel: async () => responses.shift() as never,
+        executeTool: async () => [],
+        writeSummary: async () => 'summary-1',
+        persist: async () => undefined,
+        telemetry,
+      }
+    );
+    const snapshot = telemetry.snapshot();
+    expect(snapshot.stages.filter((s) => s.stage === 'model.call')).toHaveLength(2);
+    expect(snapshot.stages.some((s) => s.stage === 'session.persist')).toBe(true);
+    expect(snapshot.modelCalls).toEqual([
+      { promptTokens: 50, completionTokens: 5, totalTokens: 55, retries: 0 },
+      { retries: 0 },
+    ]);
+  });
 });

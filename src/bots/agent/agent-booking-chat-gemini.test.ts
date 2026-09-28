@@ -26,7 +26,7 @@ describe('callGeminiBookingModel', () => {
 
     const resultPromise = expect(
       callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
-    ).resolves.toEqual({ message: { role: 'assistant', content: 'Synthetic response' } });
+    ).resolves.toMatchObject({ message: { role: 'assistant', content: 'Synthetic response' } });
 
     await vi.advanceTimersByTimeAsync(1_000);
     await resultPromise;
@@ -53,7 +53,7 @@ describe('callGeminiBookingModel', () => {
 
     const resultPromise = expect(
       callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
-    ).resolves.toEqual({ message: { role: 'assistant', content: 'Recovered response' } });
+    ).resolves.toMatchObject({ message: { role: 'assistant', content: 'Recovered response' } });
 
     await vi.advanceTimersByTimeAsync(15_000);
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -122,5 +122,33 @@ describe('callGeminiBookingModel', () => {
       callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
     ).rejects.toThrow('Gemini request failed: 400');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('returns Gemini usage and the retry count', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'ok' } }],
+            usage: { prompt_tokens: 120, completion_tokens: 8, total_tokens: 128 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultPromise = expect(
+      callGeminiBookingModel([{ role: 'user', content: 'Synthetic request' }], 'test-key')
+    ).resolves.toEqual({
+      message: { role: 'assistant', content: 'ok' },
+      usage: { prompt_tokens: 120, completion_tokens: 8, total_tokens: 128 },
+      retries: 1,
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await resultPromise;
   });
 });

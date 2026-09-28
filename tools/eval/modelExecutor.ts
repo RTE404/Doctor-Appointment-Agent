@@ -2,9 +2,9 @@ import type { Communication } from '@medplum/fhirtypes';
 
 import { callGeminiBookingModel } from '../../src/bots/agent/agent-booking-chat.js';
 import { runBookingChatLoop } from '../../src/bots/agent/lib/bookingChatLoop.js';
-import type { BookingChatTraceEvent } from '../../src/bots/agent/lib/bookingChatLoop.js';
+import type { BookingChatModelResponse, BookingChatTraceEvent } from '../../src/bots/agent/lib/bookingChatLoop.js';
 import type { BookableOption } from '../../src/bots/agent/lib/bookableOptions.js';
-import type { BookingChatMessage, BookingToolCall } from '../../src/bots/agent/lib/bookingSession.js';
+import type { BookingChatMessage } from '../../src/bots/agent/lib/bookingSession.js';
 import { BOOKING_CHAT_SYSTEM_PROMPT } from '../../src/bots/agent/lib/prompts.js';
 import type { AgentEvalExecutor } from './runAgentEval.js';
 import type {
@@ -17,9 +17,7 @@ import type {
 export type EvalModelCaller = (
   transcript: BookingChatMessage[],
   apiKey: string
-) => Promise<{
-  message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
-}>;
+) => Promise<BookingChatModelResponse>;
 
 export interface ModelExecutorOptions {
   apiKey: string;

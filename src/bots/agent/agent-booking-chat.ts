@@ -12,9 +12,9 @@ import {
   searchPreviousPhysicianTool,
 } from './lib/bookingChatTools.js';
 import { createBookingSession, loadBookingSession, persistBookingSession } from './lib/bookingSession.js';
-import type { BookingChatMessage, BookingSession, BookingToolCall } from './lib/bookingSession.js';
+import type { BookingChatMessage, BookingSession } from './lib/bookingSession.js';
 import { runBookingChatLoop } from './lib/bookingChatLoop.js';
-import type { BookingChatLoopResult, BookingChatTraceEvent } from './lib/bookingChatLoop.js';
+import type { BookingChatLoopResult, BookingChatModelResponse, BookingChatTraceEvent } from './lib/bookingChatLoop.js';
 export { MAX_TOOL_LOOP_STEPS } from './lib/bookingChatLoop.js';
 import type { resolveProposedOptions } from './lib/proposeOptions.js';
 
@@ -22,14 +22,10 @@ export type BookingChatInput = { patientId: string; message: string; sessionId?:
 
 export type BookingChatResult = BookingChatLoopResult;
 
-interface GeminiToolResponse {
-  message: { role: 'assistant'; content: string | null; tool_calls?: BookingToolCall[] };
-}
-
 const GEMINI_RETRY_DELAYS_MS = [1_000, 4_000, 16_000, 60_000] as const;
 const RETRYABLE_GEMINI_STATUSES = new Set([429, 500, 502, 503, 504]);
 
-type GeminiToolCaller = (transcript: BookingChatMessage[], apiKey: string) => Promise<GeminiToolResponse>;
+type GeminiToolCaller = (transcript: BookingChatMessage[], apiKey: string) => Promise<BookingChatModelResponse>;
 
 let geminiToolCaller: GeminiToolCaller = callGeminiBookingModel;
 
@@ -41,7 +37,7 @@ export function __setGeminiToolCallerForTests(fn: GeminiToolCaller): void {
 export async function callGeminiBookingModel(
   transcript: BookingChatMessage[],
   apiKey: string
-): Promise<GeminiToolResponse> {
+): Promise<BookingChatModelResponse> {
   for (let attempt = 0; attempt <= GEMINI_RETRY_DELAYS_MS.length; attempt += 1) {
     const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
@@ -55,7 +51,7 @@ export async function callGeminiBookingModel(
     });
     if (response.ok) {
       const body = await response.json();
-      return { message: body.choices[0].message };
+      return { message: body.choices[0].message, usage: body.usage, retries: attempt };
     }
     if (!RETRYABLE_GEMINI_STATUSES.has(response.status) || attempt === GEMINI_RETRY_DELAYS_MS.length) {
       throw new Error(`Gemini request failed: ${response.status}`);
